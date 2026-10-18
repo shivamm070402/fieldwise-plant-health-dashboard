@@ -1,0 +1,14 @@
+{
+  "model_file": "plant_disease_model.keras",
+  "labels_file": "class_names.json",
+  "input_size": [
+    224,
+    224
+  ],
+  "color_mode": "RGB",
+  "pixel_range": [
+    0,
+    255
+  ],
+  "number_of_classes": 38
+}
