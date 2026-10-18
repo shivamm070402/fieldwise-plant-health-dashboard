@@ -4,9 +4,10 @@ React (JavaScript) + Vite frontend with GSAP motion, a FastAPI inference API, an
 
 ## Live deployment
 
+- **GitHub Pages:** https://shivamm070402.github.io/fieldwise-plant-health-dashboard/
 - **Dashboard:** https://fieldwise-plant-health-dashboard.netlify.app
 - **Railway API health:** https://fieldwise-plant-health-dashboard-production.up.railway.app/api/health
-- Both deployments are connected to the private GitHub repository's `main` branch for automatic deploys.
+- GitHub Pages, Netlify, and Railway are connected to the `main` branch for automatic deploys. The GitHub Pages site serves the frontend; API requests go to Railway.
 
 The public demo currently has no login or per-account isolation. Scan results and uploaded images are shared and publicly accessible; add authentication before using private or sensitive plant images.
 
@@ -20,7 +21,7 @@ backend/models/class_names.json
 backend/models/model_info.json
 ```
 
-The API expects 224×224 RGB input with pixel values in the 0–255 range, matching this model metadata. Model weights are ignored by Git on purpose. For a private GitHub repository deployment, add the model file with `git add -f backend/models/plant_disease_model.keras` and include the matching JSON files. Do that only if you are comfortable storing model weights in that repository. Otherwise use a private artifact store and configure the service to retrieve the artifact before startup (the download integration is not included yet). Do not place database credentials in the frontend.
+The API expects 224×224 RGB input with pixel values in the 0–255 range, matching this model metadata. This repository includes tracked model weights and backend code, so making the repository public also makes those files public. Do not place database credentials in the frontend.
 
 ## Download the Kaggle dataset
 
@@ -117,7 +118,16 @@ The API creates or migrates the prediction and dataset catalog tables at startup
 4. Copy the Netlify site origin into Railway's `CORS_ORIGINS` variable and redeploy the API.
 5. Open the Netlify URL, upload a leaf photo, run a scan, and confirm the result appears in Prediction history.
 
-## 5. Main files and endpoints
+## 5. Deploy the frontend to GitHub Pages
+
+The `.github/workflows/pages.yml` workflow builds `frontend/` and publishes it to GitHub Pages on pushes to `main`. It uses the project-site base path `/fieldwise-plant-health-dashboard/` and sets the Railway API URL at build time.
+
+1. Make the repository public or use a GitHub plan that supports Pages for private repositories.
+2. In repository **Settings → Pages**, set **Build and deployment → Source** to **GitHub Actions**.
+3. Add `https://shivamm070402.github.io` to the Railway service's `CORS_ORIGINS` variable alongside the Netlify origin, then redeploy the API.
+4. Push changes to `main` or run **Actions → Deploy frontend to GitHub Pages → Run workflow**. The published site is https://shivamm070402.github.io/fieldwise-plant-health-dashboard/.
+
+## 6. Main files and endpoints
 
 - `frontend/src/App.jsx` — dashboard, image upload, weather, history, and GSAP animations.
 - `backend/app/main.py` — model inference, weather, health, and history API.
