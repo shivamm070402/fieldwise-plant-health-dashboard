@@ -2,6 +2,14 @@
 
 React (JavaScript) + Vite frontend with GSAP motion, a FastAPI inference API, and SQLAlchemy prediction history. PostgreSQL is the production database; local development uses SQLite when `DATABASE_URL` is unset. MongoDB is not needed for the current data model. No Docker is required.
 
+## Live deployment
+
+- **Dashboard:** https://fieldwise-plant-health-dashboard.netlify.app
+- **Railway API health:** https://fieldwise-plant-health-dashboard-production.up.railway.app/api/health
+- Both deployments are connected to the private GitHub repository's `main` branch for automatic deploys.
+
+The public demo currently has no login or per-account isolation. Scan results and uploaded images are shared and publicly accessible; add authentication before using private or sensitive plant images.
+
 ## 1. Add the trained model
 
 The supplied model ZIP has been unpacked to `backend/models/`. It contains the Keras weights, matching class names, and metadata. Keep all three files from the same training run:
@@ -29,7 +37,7 @@ Download the Kaggle image dataset into `backend/datasets/new-plant-diseases-data
 
 3. Start the backend and open the dashboard. In **Browse Kaggle test images**, click **Index Kaggle images**, choose the `test` or `valid` split, optionally filter by plant/disease, select a sample, and click **Analyze selected image**. The Kaggle `test` folder has unlabeled images, so it shows predictions without a ground-truth match check; labeled `valid` images show the prediction against the folder label. For a fair accuracy check, use a split that was excluded when the imported model was trained.
 
-The `dataset_images` database table stores file paths, labels, split names, and file metadata; the large dataset images remain in the Git-ignored folder. Each scan is saved to the `predictions` table with its prediction, confidence, image, and (for labeled Kaggle samples) expected class and match result. The catalog uses the same configured SQLite/PostgreSQL database as scan history. The history API currently has no user login or per-account isolation; keep a deployed instance private until authentication is added.
+The `dataset_images` database table stores file paths, labels, split names, and file metadata; the large dataset images remain in the Git-ignored folder. Each scan is saved to the `predictions` table with its prediction, confidence, image, and (for labeled Kaggle samples) expected class and match result. The catalog uses the same configured SQLite/PostgreSQL database as scan history.
 
 ## 2. Run locally on Windows
 
