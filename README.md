@@ -122,27 +122,17 @@ The API creates or migrates the prediction and dataset catalog tables at startup
 4. Copy the Netlify site origin into Railway's `CORS_ORIGINS` variable and redeploy the API.
 5. Open the Netlify URL, upload a leaf photo, run a scan, and confirm the result appears in Prediction history.
 
-## 5. Deploy the frontend to GitHub Pages
+## 5. Deploy backend on Railway and frontend on GitHub Pages
 
-The `.github/workflows/pages.yml` workflow builds `frontend/` and publishes it to GitHub Pages on pushes to `main`. It uses the project-site base path `/fieldwise-plant-health-dashboard/` and reads the backend URL from the `VITE_API_BASE_URL` repository variable.
+The `.github/workflows/pages.yml` workflow builds `frontend/` and publishes it to GitHub Pages on pushes to `main`. It uses the project-site base path `/fieldwise-plant-health-dashboard/` and reads the Railway API origin from the `VITE_API_BASE_URL` repository variable.
 
 1. Make the repository public or use a GitHub plan that supports Pages for private repositories.
 2. In repository **Settings → Pages**, set **Build and deployment → Source** to **GitHub Actions**.
-3. Set the repository variable `VITE_API_BASE_URL` to the deployed API origin (for example, `https://fieldwise-api-<hash>-as.a.run.app`, without a trailing slash). Set the backend `CORS_ORIGINS` to `https://shivamm070402.github.io` (and any other frontend origins you use).
-4. Push changes to `main` or run **Actions → Deploy frontend to GitHub Pages → Run workflow**. The published site is https://shivamm070402.github.io/fieldwise-plant-health-dashboard/.
+3. In Railway, connect the backend service to this GitHub repository and `main`; set its Root Directory to `/backend`. Railway deploys on pushes to the connected branch. Set `CORS_ORIGINS` to `https://shivamm070402.github.io` (plus `http://localhost:5173` if you still test locally), and make sure `DATABASE_URL` references Railway PostgreSQL. The backend Dockerfile and model files are in `backend/`.
+4. Add the Railway API origin as the `VITE_API_BASE_URL` repository variable under **Settings → Secrets and variables → Actions → Variables**. Use the public domain shown in Railway under the backend service's **Settings → Networking**.
+5. Push changes to `main` or run **Actions → Deploy frontend to GitHub Pages → Run workflow**. The published site is https://shivamm070402.github.io/fieldwise-plant-health-dashboard/.
 
-## 6. Deploy both apps from GitHub (Pages + Cloud Run)
-
-GitHub Pages can host the frontend, but it cannot run the FastAPI backend. The `.github/workflows/deploy-backend.yml` workflow deploys the API to Google Cloud Run whenever backend files change on `main`, or when manually started from the Actions tab. It expects these GitHub repository settings under **Settings → Secrets and variables → Actions**:
-
-- Variables: `GCP_PROJECT_ID`, `GCP_REGION` (for example `asia-south1`), `CORS_ORIGINS` (`https://shivamm070402.github.io`), and `VITE_API_BASE_URL` (the Cloud Run API URL, set after the first backend deployment).
-- Secrets: `GCP_SA_KEY` (the Google Cloud service-account JSON key) and `DATABASE_URL` (a PostgreSQL connection URL for persistent scan history and image data).
-
-In Google Cloud, create/select a project, enable Cloud Run and Cloud Build APIs, create a service account with Cloud Run Admin, Cloud Build Editor, Artifact Registry Writer, Service Usage Consumer, and Service Account User permissions, then save its JSON key as `GCP_SA_KEY`. Create a PostgreSQL database separately and save its connection URL as `DATABASE_URL`; Cloud Run's local filesystem and SQLite are not persistent storage. Never commit either key or database URL.
-
-The model weights are excluded by `.gitignore`, so the deployment workflow requires `backend/models/plant_disease_model.keras` and `backend/models/class_names.json` to be present in the GitHub checkout. Store the model in a private repository or use an artifact-storage mechanism; do not make a private model public just to deploy. After setting the variables/secrets and making sure the model is available, push the workflow and backend to `main`. When the first backend run succeeds, copy the service URL from its Actions log into `VITE_API_BASE_URL`, then run the Pages workflow again. Confirm the API at `<Cloud Run URL>/api/health`.
-
-## 7. Main files and endpoints
+## 6. Main files and endpoints
 
 - `frontend/src/App.jsx` — dashboard, image upload, weather, history, and GSAP animations.
 - `backend/app/main.py` — model inference, weather, health, and history API.
