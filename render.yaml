@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: fieldwise-plant-api
+    runtime: python
+    plan: free
+    region: singapore
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    envVars:
+      - key: CORS_ORIGINS
+        value: https://shivamm070402.github.io
+      - key: TF_NUM_INTRAOP_THREADS
+        value: "2"
+      - key: TF_NUM_INTEROP_THREADS
+        value: "2"
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
