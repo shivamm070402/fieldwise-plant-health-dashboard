@@ -10,3 +10,4 @@ kagglehub>=0.3.12,<2
 uvicorn[standard]==0.34.0
 openai>=1.68.0,<3.0
 python-dotenv>=1.0.1,<2.0
+firebase-admin>=6.5,<8

@@ -2,6 +2,8 @@
 
 React (JavaScript) + Vite frontend with GSAP motion, a FastAPI inference API, and SQLAlchemy prediction history. PostgreSQL is the production database; local development uses SQLite when `DATABASE_URL` is unset. MongoDB is not needed for the current data model. No Docker is required.
 
+The Expo app keeps the Fieldwise visual style in a phone-sized layout. Mobile scan results and uploaded image bytes are stored in the configured SQL history; when Firebase Admin credentials are configured on FastAPI, mobile prediction metadata is also mirrored to Firestore `mobile_scan_tests`. See `mobile/README.md` for Firebase setup and field-test data notes.
+
 ## Live deployment
 
 - **GitHub Pages:** https://shivamm070402.github.io/fieldwise-plant-health-dashboard/
@@ -20,6 +22,8 @@ backend/models/plant_disease_model.keras
 backend/models/class_names.json
 backend/models/model_info.json
 ```
+
+The current checkpoint evaluates at 96.36% top-1 accuracy on the downloaded dataset's 17,572-image `valid` split (224×224 RGB preprocessing). This is a curated-dataset result, not a guarantee for real field/mobile photos; collect and label representative phone images before using them for field-accuracy claims or retraining.
 
 The API expects 224×224 RGB input with pixel values in the 0–255 range, matching this model metadata. This repository includes tracked model weights and backend code, so making the repository public also makes those files public. Do not place database credentials in the frontend.
 
@@ -61,7 +65,7 @@ $python311 = "$env:USERPROFILE\AppData\Local\Programs\Python\Python311\python.ex
 & $python311 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-python -m uvicorn app.main:app --port 8000
+python -m uvicorn app.main:app --port 8001
 ```
 
 The API creates `backend/fieldwise.db` automatically for local development. It loads the model from `backend/models/` and exposes `/api/health`, `/api/predict`, `/api/history`, and `/api/weather`.
@@ -96,7 +100,7 @@ npm install
 npm run dev
 ```
 
-Open the Vite URL printed in the terminal (normally `http://localhost:5173`). Vite forwards `/api` requests to `http://localhost:8000`.
+Open the Vite URL printed in the terminal (normally `http://localhost:5173`). Vite forwards `/api` requests to `http://127.0.0.1:8001` by default. Set `VITE_API_PROXY_TARGET` if your backend uses another local port.
 
 ## 3. Deploy the API to Railway (no Docker)
 
@@ -120,14 +124,25 @@ The API creates or migrates the prediction and dataset catalog tables at startup
 
 ## 5. Deploy the frontend to GitHub Pages
 
-The `.github/workflows/pages.yml` workflow builds `frontend/` and publishes it to GitHub Pages on pushes to `main`. It uses the project-site base path `/fieldwise-plant-health-dashboard/` and sets the Railway API URL at build time.
+The `.github/workflows/pages.yml` workflow builds `frontend/` and publishes it to GitHub Pages on pushes to `main`. It uses the project-site base path `/fieldwise-plant-health-dashboard/` and reads the backend URL from the `VITE_API_BASE_URL` repository variable.
 
 1. Make the repository public or use a GitHub plan that supports Pages for private repositories.
 2. In repository **Settings → Pages**, set **Build and deployment → Source** to **GitHub Actions**.
-3. Add `https://shivamm070402.github.io` to the Railway service's `CORS_ORIGINS` variable alongside the Netlify origin, then redeploy the API.
+3. Set the repository variable `VITE_API_BASE_URL` to the deployed API origin (for example, `https://fieldwise-api-<hash>-as.a.run.app`, without a trailing slash). Set the backend `CORS_ORIGINS` to `https://shivamm070402.github.io` (and any other frontend origins you use).
 4. Push changes to `main` or run **Actions → Deploy frontend to GitHub Pages → Run workflow**. The published site is https://shivamm070402.github.io/fieldwise-plant-health-dashboard/.
 
-## 6. Main files and endpoints
+## 6. Deploy both apps from GitHub (Pages + Cloud Run)
+
+GitHub Pages can host the frontend, but it cannot run the FastAPI backend. The `.github/workflows/deploy-backend.yml` workflow deploys the API to Google Cloud Run whenever backend files change on `main`, or when manually started from the Actions tab. It expects these GitHub repository settings under **Settings → Secrets and variables → Actions**:
+
+- Variables: `GCP_PROJECT_ID`, `GCP_REGION` (for example `asia-south1`), `CORS_ORIGINS` (`https://shivamm070402.github.io`), and `VITE_API_BASE_URL` (the Cloud Run API URL, set after the first backend deployment).
+- Secrets: `GCP_SA_KEY` (the Google Cloud service-account JSON key) and `DATABASE_URL` (a PostgreSQL connection URL for persistent scan history and image data).
+
+In Google Cloud, create/select a project, enable Cloud Run and Cloud Build APIs, create a service account with Cloud Run Admin, Cloud Build Editor, Artifact Registry Writer, Service Usage Consumer, and Service Account User permissions, then save its JSON key as `GCP_SA_KEY`. Create a PostgreSQL database separately and save its connection URL as `DATABASE_URL`; Cloud Run's local filesystem and SQLite are not persistent storage. Never commit either key or database URL.
+
+The model weights are excluded by `.gitignore`, so the deployment workflow requires `backend/models/plant_disease_model.keras` and `backend/models/class_names.json` to be present in the GitHub checkout. Store the model in a private repository or use an artifact-storage mechanism; do not make a private model public just to deploy. After setting the variables/secrets and making sure the model is available, push the workflow and backend to `main`. When the first backend run succeeds, copy the service URL from its Actions log into `VITE_API_BASE_URL`, then run the Pages workflow again. Confirm the API at `<Cloud Run URL>/api/health`.
+
+## 7. Main files and endpoints
 
 - `frontend/src/App.jsx` — dashboard, image upload, weather, history, and GSAP animations.
 - `backend/app/main.py` — model inference, weather, health, and history API.

@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import gsap from 'gsap';
-import { CloudRain, CloudSun, Droplets, Leaf, MapPin, ShieldCheck, Sun, Upload, Wind } from 'lucide-react';
+import { Activity, Bell, Camera, CloudRain, CloudSun, Droplets, Info, LayoutDashboard, Leaf, MapPin, ScanLine, Search, ShieldCheck, Smartphone, Sprout, Sun, Upload, Wind, X } from 'lucide-react';
 import './weather.css';
 import './insights.css';
+import AboutPage from './AboutPage.jsx';
+import HomePage from './HomePage.jsx';
+import MobileAccessModal from './MobileAccessModal.jsx';
 import { diseaseWeatherCue, getPlantGuidance } from './plant-guidance.js';
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
@@ -11,26 +14,52 @@ const prettify = (s = '') => s.replaceAll('___', ' · ').replaceAll('_', ' ').re
 const condition = (n) => (n == null ? 'Forecast' : conditions[n] || 'Variable conditions');
 const percent = (n) => `${(Number(n || 0) * 100).toFixed(1)}%`;
 
+async function readJson(response, requestName) {
+  const body = await response.text();
+  if (!body.trim()) {
+    if (!response.ok) return { detail: `${requestName} failed with HTTP ${response.status} and an empty response.` };
+    throw new Error(`${requestName} returned an empty response (HTTP ${response.status}). Check the API service and its logs.`);
+  }
+
+  try {
+    return JSON.parse(body);
+  } catch {
+    if (!response.ok) return { detail: `${requestName} failed with HTTP ${response.status} and a non-JSON response.` };
+    throw new Error(`${requestName} returned a non-JSON response (HTTP ${response.status}). Check the API URL and server logs.`);
+  }
+}
+
+function formatApiDetail(detail) {
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((item) => {
+      if (typeof item === 'string') return item;
+      if (!item || typeof item !== 'object') return String(item);
+      const location = Array.isArray(item.loc) ? `${item.loc.join('.')}: ` : '';
+      return `${location}${item.msg || JSON.stringify(item)}`;
+    }).join(' · ');
+  }
+  if (detail && typeof detail === 'object') return detail.message || detail.msg || JSON.stringify(detail);
+  return '';
+}
+
 function ForecastDiagram({ daily }) {
   if (!daily?.time?.length) return <div className="forecast-empty">Waiting for the five-day forecast…</div>;
-  const values = [...(daily.temperature_2m_min || []), ...(daily.temperature_2m_max || [])].map(Number).filter(Number.isFinite);
-  const floor = values.length ? Math.min(...values) : 0;
-  const span = Math.max(1, (values.length ? Math.max(...values) : 1) - floor);
-  return <div className="forecast-diagram" aria-label="Five-day temperature and rain forecast">
-    <div className="forecast-diagram-head"><span>DAY</span><span>TEMPERATURE RANGE</span><span>RAIN CHANCE</span></div>
-    {daily.time.map((day, index) => {
-      const low = Number(daily.temperature_2m_min?.[index] ?? floor);
-      const high = Number(daily.temperature_2m_max?.[index] ?? floor);
-      const left = Math.max(0, Math.min(100, ((low - floor) / span) * 100));
-      const width = Math.max(4, Math.min(100 - left, ((high - low) / span) * 100));
+  return <div className="forecast-days" aria-label="Five-day temperature and rain forecast">
+    {daily.time.slice(0, 5).map((day, index) => {
+      const code = daily.weather_code?.[index];
+      const ForecastIcon = code === 0 ? Sun : code >= 51 ? CloudRain : CloudSun;
+      const high = daily.temperature_2m_max?.[index];
+      const low = daily.temperature_2m_min?.[index];
       const rain = Math.max(0, Math.min(100, Number(daily.precipitation_probability_max?.[index] ?? 0)));
-      return <div className="forecast-diagram-row" key={day}>
+      return <article className="forecast-day" key={day}>
         <b>{index === 0 ? 'Today' : new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(new Date(`${day}T12:00:00`))}</b>
-        <div className="temperature-plot"><span>{Math.round(low)}°</span><div className="temperature-track"><i style={{ left: `${left}%`, width: `${width}%` }} /></div><strong>{Math.round(high)}°</strong></div>
-        <div className="rain-plot"><span>{rain}%</span><div className="rain-track"><i style={{ width: `${rain}%` }} /></div></div>
-      </div>;
+        <ForecastIcon size={25} strokeWidth={1.7} aria-hidden="true" />
+        <span className="forecast-condition">{condition(code)}</span>
+        <div className="forecast-temperatures"><strong>{high == null ? '—' : `${Math.round(high)}°`}</strong><span>{low == null ? '—' : `${Math.round(low)}°`}</span></div>
+        <small><CloudRain size={12} /> {rain}%</small>
+      </article>;
     })}
-    <small className="diagram-note">Forecast for the selected city. Choose another country, region, and city above to compare local conditions.</small>
   </div>;
 }
 
@@ -121,15 +150,22 @@ function toCareWeatherSnapshot(data) {
   };
 }
 
-export default function App() {
+function Dashboard({ onMobileAccess }) {
   const root = useRef(null);
   const fileRef = useRef(null);
+  const captureFileRef = useRef(null);
+  const videoRef = useRef(null);
+  const cameraStreamRef = useRef(null);
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState('');
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraError, setCameraError] = useState('');
+  const [apiStatus, setApiStatus] = useState('checking');
   const [result, setResult] = useState(null);
+  const [verifiedClass, setVerifiedClass] = useState('');
+  const [labelBusy, setLabelBusy] = useState(false);
+  const [labelMessage, setLabelMessage] = useState('');
   const [carePlan, setCarePlan] = useState(null);
-  const [careBusy, setCareBusy] = useState(false);
-  const [careError, setCareError] = useState('');
   const [countryWeatherFit, setCountryWeatherFit] = useState(null);
   const [countryWeatherFitBusy, setCountryWeatherFitBusy] = useState(false);
   const [countryWeatherFitError, setCountryWeatherFitError] = useState('');
@@ -163,6 +199,39 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const section = window.location.hash.slice(1);
+    if (!section) return undefined;
+    const firstFrame = requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById(section)?.scrollIntoView({ behavior: 'smooth' })));
+    return () => cancelAnimationFrame(firstFrame);
+  }, []);
+
+  useEffect(() => {
+    if (cameraOpen && videoRef.current && cameraStreamRef.current) {
+      videoRef.current.srcObject = cameraStreamRef.current;
+      void videoRef.current.play().catch(() => setCameraError('Camera preview could not start. Check browser permissions and try again.'));
+    }
+  }, [cameraOpen]);
+
+  useEffect(() => () => {
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    async function checkBackend() {
+      try {
+        const response = await fetch(`${API_BASE}/api/health`, { signal: controller.signal });
+        const data = await readJson(response, 'Backend health check');
+        setApiStatus(response.ok && data.status === 'ready' ? 'online' : response.ok ? 'limited' : 'offline');
+      } catch (err) {
+        if (err.name !== 'AbortError') setApiStatus('offline');
+      }
+    }
+    void checkBackend();
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
     if (!file) { setPreview(''); return undefined; }
     const url = URL.createObjectURL(file);
     setPreview(url);
@@ -172,15 +241,11 @@ export default function App() {
   useEffect(() => {
     if (!result?.history_id || !weather?.current || !weather?.daily) {
       setCarePlan(null);
-      setCareBusy(false);
-      setCareError('');
       return undefined;
     }
 
     const controller = new AbortController();
     setCarePlan(null);
-    setCareError('');
-    setCareBusy(true);
     async function requestCarePlan() {
       try {
         const response = await fetch(`${API_BASE}/api/care-plan`, {
@@ -193,55 +258,17 @@ export default function App() {
           }),
           signal: controller.signal,
         });
-        const data = await response.json().catch(() => null);
-        if (!response.ok) throw new Error(data?.detail || `ChatGPT request failed (${response.status}).`);
+        const data = await readJson(response, 'Care plan request');
+        if (!response.ok) throw new Error(formatApiDetail(data?.detail) || `ChatGPT request failed (${response.status}).`);
         if (!data?.plan?.crop_weather_fit || !Array.isArray(data.plan.remedy_points)) throw new Error('ChatGPT returned an incomplete care plan.');
         setCarePlan(data.plan);
       } catch (err) {
-        if (err.name !== 'AbortError') setCareError(err instanceof Error ? err.message : 'ChatGPT care plan unavailable.');
-      } finally {
-        if (!controller.signal.aborted) setCareBusy(false);
+        if (err.name !== 'AbortError') setCarePlan(null);
       }
     }
     void requestCarePlan();
     return () => controller.abort();
   }, [result, weather, weatherComparisons]);
-
-  useEffect(() => {
-    const predictionId = result?.history_id;
-    if (!predictionId) {
-      setCountryWeatherFit(null);
-      setCountryWeatherFitBusy(false);
-      setCountryWeatherFitError('');
-      return undefined;
-    }
-
-    const controller = new AbortController();
-    setCountryWeatherFit(null);
-    setCountryWeatherFitError('');
-    setCountryWeatherFitBusy(true);
-    async function requestWorldwideFit() {
-      try {
-        const response = await fetch(`${API_BASE}/api/country-weather-suitability`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prediction_id: predictionId }),
-          signal: controller.signal,
-        });
-        const data = await response.json().catch(() => null);
-        if (!response.ok) throw new Error(data?.detail || `Worldwide weather comparison failed (${response.status}).`);
-        if (!Array.isArray(data?.countries)) throw new Error('The worldwide weather service returned an incomplete country list.');
-        setCountryWeatherFit(data);
-        setCountryWeatherFitFilter('favorable_now');
-      } catch (err) {
-        if (err.name !== 'AbortError') setCountryWeatherFitError(err instanceof Error ? err.message : 'Worldwide crop weather comparison unavailable.');
-      } finally {
-        if (!controller.signal.aborted) setCountryWeatherFitBusy(false);
-      }
-    }
-    void requestWorldwideFit();
-    return () => controller.abort();
-  }, [result?.history_id, countryWeatherFitReload]);
 
   async function loadWeather(event) {
     event?.preventDefault();
@@ -251,10 +278,11 @@ export default function App() {
       const params = new URLSearchParams();
       params.set('city', city.trim());
       if (region) params.set('admin1', region);
+      if (country) params.set('country', country);
       if (countryCode) params.set('country_code', countryCode);
       const response = await fetch(`${API_BASE}/api/weather?${params.toString()}`, { signal: AbortSignal.timeout(30000) });
-      const data = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(data?.detail || `Weather request failed (${response.status}).`);
+      const data = await readJson(response, 'Weather request');
+      if (!response.ok) throw new Error(formatApiDetail(data?.detail) || `Weather request failed (${response.status}).`);
       if (!data?.current || !data?.daily || !data?.location) throw new Error('Weather service returned incomplete data. Please retry.');
       setWeather(data);
     } catch (err) {
@@ -270,8 +298,8 @@ export default function App() {
       setCountriesBusy(true);
       try {
         const response = await fetch(`${API_BASE}/api/weather/countries`, { signal: controller.signal });
-        const data = await response.json();
-        if (!response.ok || !Array.isArray(data.countries)) throw new Error(data.detail || 'Could not load countries.');
+        const data = await readJson(response, 'Country list request');
+        if (!response.ok || !Array.isArray(data?.countries)) throw new Error(formatApiDetail(data?.detail) || 'Could not load countries.');
         setCountries(data.countries);
         const selected = data.countries.find((item) => item.name === country);
         if (selected) setCountryCode(selected.code);
@@ -290,15 +318,15 @@ export default function App() {
       setRegionsBusy(true); setLocationListError('');
       try {
         const response = await fetch(`${API_BASE}/api/weather/states?country=${encodeURIComponent(country)}`, { signal: controller.signal });
-        const data = await response.json();
-        if (!response.ok || !Array.isArray(data.states)) throw new Error(data.detail || 'Could not load states or provinces.');
+        const data = await readJson(response, 'State and region list request');
+        if (!response.ok || !Array.isArray(data?.states)) throw new Error(formatApiDetail(data?.detail) || 'Could not load states or provinces.');
         setRegions(data.states);
         if (data.states.length === 0) {
           setRegion('');
           setCitiesBusy(true);
           const cityResponse = await fetch(`${API_BASE}/api/weather/cities?country=${encodeURIComponent(country)}`, { signal: controller.signal });
-          const cityData = await cityResponse.json();
-          if (!cityResponse.ok || !Array.isArray(cityData.cities)) throw new Error(cityData.detail || 'Could not load cities.');
+          const cityData = await readJson(cityResponse, 'City list request');
+          if (!cityResponse.ok || !Array.isArray(cityData?.cities)) throw new Error(formatApiDetail(cityData?.detail) || 'Could not load cities.');
           setCities(cityData.cities);
         } else if (!data.states.includes(region)) setRegion('');
       } catch (err) {
@@ -317,8 +345,8 @@ export default function App() {
       try {
         const params = new URLSearchParams({ country, state: region });
         const response = await fetch(`${API_BASE}/api/weather/cities?${params.toString()}`, { signal: controller.signal });
-        const data = await response.json();
-        if (!response.ok || !Array.isArray(data.cities)) throw new Error(data.detail || 'Could not load cities for this region.');
+        const data = await readJson(response, 'City list request');
+      if (!response.ok || !Array.isArray(data?.cities)) throw new Error(formatApiDetail(data?.detail) || 'Could not load cities for this region.');
         setCities(data.cities);
       } catch (err) {
         if (err.name !== 'AbortError') setLocationListError(err instanceof Error ? err.message : 'Could not load cities for this region.');
@@ -328,25 +356,106 @@ export default function App() {
     return () => controller.abort();
   }, [country, region]);
 
-  function choosePhoto(candidate) {
+  function choosePhoto(candidate, imageSource = 'upload') {
     if (!candidate) return;
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(candidate.type)) { setError('Choose a JPG, PNG, or WebP image.'); return; }
     if (candidate.size > 10 * 1024 * 1024) { setError('Image must be under 10 MB.'); return; }
     setFile(candidate); setResult(null); setError('');
+    void analyze(candidate, imageSource);
   }
 
-  async function analyze() {
-    if (!file) return;
+  function stopCamera() {
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    cameraStreamRef.current = null;
+    setCameraOpen(false);
+  }
+
+  async function startCamera() {
+    setCameraError('');
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraError('Camera access needs a secure page (HTTPS or localhost) and a supported browser.');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+      cameraStreamRef.current = stream;
+      setCameraOpen(true);
+    } catch (cameraFailure) {
+      const messages = {
+        NotAllowedError: 'Camera permission was denied. Allow camera access in your browser settings, then try again.',
+        NotFoundError: 'No camera was found on this device.',
+        NotReadableError: 'The camera is busy in another app. Close it there and try again.',
+      };
+      setCameraError(messages[cameraFailure.name] || 'Could not open the camera. Check browser permissions and try again.');
+    }
+  }
+
+  async function captureAndAnalyze() {
+    const video = videoRef.current;
+    if (!video || video.readyState < 2) {
+      setCameraError('Camera is still starting. Wait a moment, then capture again.');
+      return;
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const context = canvas.getContext('2d');
+    if (!context) {
+      setCameraError('Could not capture the camera image. Please try again.');
+      return;
+    }
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const imageBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92));
+    if (!imageBlob) {
+      setCameraError('Could not create an image from the camera. Please try again.');
+      return;
+    }
+    const capturedPhoto = new File([imageBlob], `plant-camera-${Date.now()}.jpg`, { type: 'image/jpeg' });
+    stopCamera();
+    setFile(capturedPhoto);
+    setResult(null);
+    setError('');
+    void analyze(capturedPhoto, 'camera');
+  }
+
+  async function analyze(candidate = file, imageSource = 'upload') {
+    if (!candidate) return;
+    if (!(candidate instanceof Blob)) {
+      setError('The selected photo is not a file upload. Choose the image again, then retry.');
+      return;
+    }
     setBusy(true); setError('');
     try {
-      const body = new FormData(); body.append('file', file);
-      const response = await fetch(`${API_BASE}/api/predict`, { method: 'POST', body });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || 'Prediction unavailable');
+      const body = new FormData(); body.append('file', candidate, candidate.name || 'plant-photo.jpg');
+      const response = await fetch(`${API_BASE}/api/predict`, { method: 'POST', headers: imageSource === 'camera' ? { 'X-Image-Source': 'camera' } : undefined, body });
+      const data = await readJson(response, 'Plant scan request');
+      if (!response.ok) throw new Error(formatApiDetail(data?.detail) || `Plant scan failed (HTTP ${response.status}).`);
       setResult(data);
+      setVerifiedClass(data.predicted_class || '');
+      setLabelMessage('');
       requestAnimationFrame(() => gsap.fromTo('.result-content', { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.45, ease: 'power2.out' }));
     } catch (err) { setError(err instanceof Error ? err.message : 'Prediction unavailable'); }
     finally { setBusy(false); }
+  }
+
+  async function saveVerifiedLabel() {
+    if (!result?.history_id || !verifiedClass || labelBusy) return;
+    setLabelBusy(true);
+    setLabelMessage('');
+    try {
+      const response = await fetch(`${API_BASE}/api/predictions/${result.history_id}/label`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ class_name: verifiedClass }),
+      });
+      const data = await readJson(response, 'Save verified label');
+      if (!response.ok) throw new Error(formatApiDetail(data?.detail) || `Save label failed (HTTP ${response.status}).`);
+      setResult((current) => ({ ...current, expected_class: data.expected_class, is_correct: data.is_correct }));
+      setLabelMessage(data.is_correct ? 'Verified: matches the model prediction.' : 'Correction saved for future model training.');
+    } catch (saveError) {
+      setLabelMessage(saveError instanceof Error ? saveError.message : 'Could not save the verified label.');
+    } finally {
+      setLabelBusy(false);
+    }
   }
 
   function addWeatherComparison() {
@@ -361,8 +470,12 @@ export default function App() {
 
   const cur = weather?.current;
   const daily = weather?.daily;
+  const CurrentWeatherIcon = cur?.weather_code === 0 ? Sun : Number(cur?.weather_code) >= 51 ? CloudRain : CloudSun;
   const forecastRain = (daily?.precipitation_probability_max || []).map(Number).filter(Number.isFinite);
   const rainPeak = forecastRain.length ? Math.max(...forecastRain) : null;
+  const rainToday = daily?.precipitation_probability_max?.[0];
+  const todayHigh = daily?.temperature_2m_max?.[0];
+  const todayLow = daily?.temperature_2m_min?.[0];
   const outlook = diseaseWeatherCue(result?.disease, result?.crop, cur || {}, daily || {});
   const confidence = Math.max(0, Math.min(1, Number(result?.confidence) || 0));
   const remedyTone = confidenceTone(confidence);
@@ -381,40 +494,47 @@ export default function App() {
   );
 
   return <div className="shell" ref={root}>
-    <aside className="sidebar"><a className="brand" href="#top"><span className="brand-icon"><Leaf size={20} /></span>fieldwise<span className="dot">.</span></a><p className="nav-caption">FARM WORKSPACE</p><a className="nav active" href="#overview">◈ &nbsp; Overview</a><a className="nav" href="#plant">♧ &nbsp; Plant health</a><a className="nav" href="#weather">☼ &nbsp; Weather & field</a><div className="side-foot">Growing together<br /><small>Field insights for every season</small></div></aside>
-    <main id="top"><header className="topbar"><span>Workspace <i>/</i> Overview</span><span><b className="live" /> AI plant care dashboard</span></header>
+    <aside className="sidebar"><a className="brand" href="#top"><span className="brand-icon"><Leaf size={19} /></span><span>fieldwise<span className="dot">.</span></span></a><p className="nav-caption">WORKSPACE</p><a className="nav active" href="#overview"><LayoutDashboard size={16} /> Overview</a><a className="nav" href="#plant"><ScanLine size={16} /> Plant detection</a><a className="nav" href="#weather"><CloudSun size={16} /> Weather & field</a><a className="nav" href="#worldwide-match"><Activity size={16} /> Crop insights</a><a className="nav" href="#about"><Info size={16} /> About Fieldwise</a><div className="side-help"><span className="help-icon"><Sprout size={17} /></span><b>Grow with confidence</b><small>AI powered plant health insights for your field.</small><a href="#plant">Start a scan <span>→</span></a></div><div className="side-foot"><span className="avatar">F</span><span><b>Field workspace</b><small>Plant health dashboard</small></span><span className="side-more">···</span></div></aside>
+    <main id="top"><header className="topbar"><div className="breadcrumbs"><span>Workspace</span><i>/</i><b>Overview</b></div><div className="top-actions"><span className={`system-status ${apiStatus}`}><b className="live" /> {apiStatus === 'online' ? 'Backend connected' : apiStatus === 'limited' ? 'Model unavailable' : apiStatus === 'offline' ? 'Backend offline' : 'Connecting…'}</span><button type="button" className="mobile-access-button" onClick={onMobileAccess}><Smartphone size={14} /> Open on mobile</button><button type="button" className="icon-button" aria-label="Search dashboard" onClick={() => document.getElementById('plant')?.scrollIntoView({ behavior: 'smooth' })}><Search size={17} /></button><button type="button" className="icon-button notification" aria-label="View dashboard notices"><Bell size={17} /><i /></button><span className="top-avatar">F</span></div></header>
       <div className="page" id="overview">
-        <div className="welcome"><div><span className="eyebrow">FIELD INTELLIGENCE · TODAY</span><h1>Your farm, at a glance.</h1><p>Plant health insights and local conditions to help plan the day.</p></div><span className="date"><Sun size={15} /> {new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'short', day: 'numeric' }).format(new Date())}</span></div>
+        <div className="welcome"><div><div className="welcome-kicker"><span className="welcome-kicker-icon"><Sprout size={13} /></span> FIELD INTELLIGENCE <span className="kicker-separator">/</span> TODAY</div><h1>Good {new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 17 ? 'afternoon' : 'evening'}, grower <span>✳</span></h1><p>Local weather and plant health, all in one place.</p></div><div className="welcome-actions"><button className="scan-quick-action" type="button" onClick={() => { if (file) { setFile(null); setResult(null); } else fileRef.current?.click(); }}><ScanLine size={15} /> {file ? 'Choose another photo' : 'Scan a plant'}</button><span className="date"><Sun size={15} /> {new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'short', day: 'numeric' }).format(new Date())}</span></div></div>
+
+        <section className="metric-grid" aria-label="Field summary">
+          <article className="metric-card"><div className="metric-top"><span>SCAN STATUS</span><span className="metric-icon teal"><ScanLine size={17} /></span></div><strong className="metric-detection">{result ? 'Complete' : 'Ready to scan'}</strong><small>{result ? 'Latest prediction saved' : 'Upload a leaf photo to begin'}</small><div className={`metric-footer ${result ? 'scan-complete' : ''}`}><span className="status-dot" /> {result ? 'Analysis finished' : 'AI model ready'}</div></article>
+          <article className="metric-card"><div className="metric-top"><span>LAST DETECTION</span><span className="metric-icon violet"><Leaf size={17} /></span></div><strong className="metric-detection">{result ? prettify(result.crop) : 'Awaiting scan'}</strong><small>{result ? prettify(result.disease) : 'Upload a leaf photo to get started'}</small><div className="metric-footer"><span className="status-dot" /> {result?.is_healthy ? 'Healthy pattern' : result ? 'Review result' : 'AI model ready'}</div></article>
+          <article className="metric-card"><div className="metric-top"><span>MODEL CONFIDENCE</span><span className="metric-icon blue"><Activity size={17} /></span></div><strong>{result ? `${Math.round(confidence * 100)}%` : '—'}</strong><small>{result ? 'Confidence in latest prediction' : 'Confidence appears after a scan'}</small><div className="metric-progress"><i style={{ width: result ? `${confidence * 100}%` : '0%' }} /></div></article>
+          <article className="metric-card"><div className="metric-top"><span>LOCAL HUMIDITY</span><span className="metric-icon amber"><Droplets size={17} /></span></div><strong>{cur?.relative_humidity_2m != null ? `${cur.relative_humidity_2m}%` : '—'}</strong><small>{weather?.location?.name || 'Loading local weather'} <span>· {cur?.temperature_2m != null ? `${Math.round(cur.temperature_2m)}°C` : 'Current conditions'}</span></small><div className="humidity-track"><i style={{ width: `${Math.max(0, Math.min(100, Number(cur?.relative_humidity_2m) || 0))}%` }} /></div></article>
+        </section>
 
         <section id="plant" className="dashboard-section plant"><div className="section-head"><div><span className="eyebrow">AI-POWERED SCREENING</span><h2>Check a plant</h2></div><span className="privacy"><ShieldCheck size={15} /> Your image is analyzed by the model</span></div><div className="plant-grid">
-          <article className="card upload-card">{!file ? <button className="drop" type="button" onClick={() => fileRef.current?.click()} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); choosePhoto(e.dataTransfer.files?.[0]); }}><span className="upload-icon"><Upload /></span><b>Drop a leaf photo here</b><small>or click to browse · JPG, PNG, WebP · max 10 MB</small><span className="choose">Choose photo</span><input ref={fileRef} hidden type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => choosePhoto(e.target.files?.[0])} /></button> : <div className="preview"><img src={preview} alt="Selected plant leaf" /><button className="remove" type="button" aria-label="Remove image" onClick={() => { setFile(null); setResult(null); }}>×</button><small>{file.name}</small></div>}
-            {error && <div className="error" role="alert">{error}</div>}<button className="analyze" disabled={!file || busy} onClick={analyze}>{busy ? 'Analyzing…' : 'Analyze plant'}</button>
+          <article className="card upload-card">{cameraOpen ? <div className="camera-live"><video ref={videoRef} autoPlay playsInline muted aria-label="Live camera preview" /><div className="camera-controls"><button className="camera-capture" type="button" onClick={captureAndAnalyze} disabled={busy}><Camera size={17} /> Capture & scan</button><button className="camera-close" type="button" onClick={stopCamera} aria-label="Close camera"><X size={17} /></button></div>{cameraError && <div className="error" role="alert">{cameraError}</div>}</div> : !file ? <><input ref={fileRef} hidden type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => { choosePhoto(e.target.files?.[0]); e.target.value = ''; }} /><input ref={captureFileRef} hidden type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={(e) => { choosePhoto(e.target.files?.[0]); e.target.value = ''; }} /><button className="drop" type="button" onClick={() => fileRef.current?.click()} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); choosePhoto(e.dataTransfer.files?.[0]); }}><span className="upload-icon"><Upload /></span><b>Drop a leaf photo here</b><small>or click to browse · JPG, PNG, WebP · max 10 MB</small><span className="choose">Choose photo</span></button><button className="camera-launch" type="button" onClick={() => captureFileRef.current?.click()}><Camera size={16} /> Capture with phone camera</button><button className="camera-launch" type="button" onClick={startCamera}><Camera size={16} /> Use live camera</button>{cameraError && <div className="error" role="alert">{cameraError}</div>}</> : <div className="preview"><img src={preview} alt="Selected plant leaf" /><button className="remove" type="button" aria-label="Remove image" onClick={() => { setFile(null); setResult(null); }}>×</button><small>{file.name}</small></div>}
+            {error && <div className="error" role="alert">{error}</div>}{!cameraOpen && <button className="analyze" disabled={!file || busy} onClick={() => analyze()}>{busy ? 'Analyzing…' : 'Analyze plant'}</button>}
           </article>
           <article className="card result">{!result ? <div className="empty"><span className="empty-icon"><Leaf size={28} /></span><b>Your plant report appears here</b><p>Upload a clear photo of one leaf to see a screening prediction and care suggestions.</p><div>01 Upload photo　 ·　 02 Run analysis　 ·　 03 Review insights</div></div> : <div className="result-content"><div className="result-top"><span className="eyebrow">SCREENING RESULT</span><span className={result.is_healthy ? 'healthy' : 'attention'}>{result.is_healthy ? 'Looks healthy' : 'Review symptoms'}</span></div><h3>{prettify(result.disease)}</h3><p className="crop">{result.crop}</p>
             <div className={`remedy-panel ${result.is_healthy ? 'is-healthy' : ''} ${remedyTone}`}>
               <div className="remedy-heading"><div><span className="eyebrow">{carePlan ? 'CHATGPT CARE PLAN' : result.is_healthy ? 'PLANT CARE' : 'DISEASE CARE'}</span><h4>{guidance?.title || `Care plan for ${prettify(result.disease)}`}</h4></div><CircleGauge label="Model confidence" value={confidence * 100} tone={remedyTone} detail="Not treatment success" /></div>
               {weather && carePlan?.crop_weather_fit && <div className={`ai-weather-fit ${weatherFitTone(carePlan.crop_weather_fit.label)}`}><div className="ai-fit-heading"><span className="eyebrow">CHATGPT · {weather.location.name || 'SELECTED CITY'} · {weather.location.country || 'COUNTRY'} · NEXT FIVE DAYS</span><b>{weatherFitLabel(carePlan.crop_weather_fit.label)}</b></div><p>{carePlan.crop_weather_fit.summary}</p>{carePlan.disease_weather_context?.summary && <small><strong>{carePlan.disease_weather_context.label === 'weather_may_support_risk' ? 'Disease weather cue: ' : 'Disease context: '}</strong>{carePlan.disease_weather_context.summary}</small>}<small className="ai-fit-caveat">This is the selected city’s five-day forecast, not a full-season or country-wide suitability rating.</small></div>}
-              {weather && !carePlan && <div className="care-status" role="status">{careBusy ? 'ChatGPT is comparing the model result with this city’s five-day weather…' : careError ? `ChatGPT care plan unavailable: ${careError} Showing the local care suggestions below.` : 'Weather data is ready for the ChatGPT care plan.'}<small>The crop/disease labels and weather values are sent; the plant photo is not sent to ChatGPT.</small></div>}
               <div className="remedy-steps">{remedyPoints.map((point, i) => <article className={`remedy-step step-${i % 3}`} key={`${i}-${point.action}`}><span className="remedy-number">{String(i + 1).padStart(2, '0')}</span><div className="remedy-step-body"><span className="remedy-point-label">Remedy</span><h5>{point.action}</h5><div><b>Why it helps</b><p>{point.explanation}</p></div><div className="remedy-solution"><b>Solution · how to do it</b><p>{point.solution}</p></div></div></article>)}</div>
               {carePlan?.caution && <p className="ai-care-caution">{carePlan.caution}</p>}
               {guidance?.source && <a className="guidance-source" href={guidance.source.href} target="_blank" rel="noreferrer">Read: {guidance.source.label}</a>}
             </div>
             {confidence < 0.7 && <p className="warn">Low confidence—try a clearer photo or seek local advice.</p>}
             <h4>Other possible matches</h4><div className="match-chart">{(result.top_predictions || []).slice(0, 3).map((match) => <div className="match" key={match.class_name}><span>{prettify(match.class_name)}</span><b>{percent(match.confidence)}</b><div className="match-track"><i style={{ width: `${Math.min(100, match.confidence * 100)}%` }} /></div></div>)}</div>
+            <div className="label-review"><label htmlFor="verified-class">Confirm the correct label</label><p>Only save a label you have checked. Verified scans are included in the training-data export.</p><div><select id="verified-class" value={verifiedClass} onChange={(event) => { setVerifiedClass(event.target.value); setLabelMessage(''); }}><option value="">Select the correct class</option>{(result.classes || []).map((className) => <option key={className} value={className}>{prettify(className)}</option>)}</select><button type="button" onClick={saveVerifiedLabel} disabled={!verifiedClass || labelBusy}>{labelBusy ? 'Saving…' : result.expected_class ? 'Update label' : 'Save verified label'}</button></div>{labelMessage && <small role="status">{labelMessage}</small>}{result.expected_class && <small>Saved label: {prettify(result.expected_class)}</small>}<a href={`${API_BASE}/api/training-data/export.zip`}>Download verified images + manifest</a></div>
             {result.disclaimer && <small className="disclaimer">{result.disclaimer}</small>}
           </div>}</article>
         </div></section>
 
-        <section id="weather" className="dashboard-section weather-section"><div className="section-head weather-section-head"><div><span className="eyebrow">WORLD WEATHER</span><h2>Weather & field outlook</h2><p className="weather-explainer">Choose a city in any listed country to compare its forecast and moisture cues. Weather is local to that city, not a country-wide crop rating.</p></div><form className="weather-location-controls" onSubmit={loadWeather}>
+        <section id="weather" className="dashboard-section weather-section"><div className="section-head weather-section-head"><div><span className="eyebrow">LOCAL FORECAST</span><h2>Weather</h2><p className="weather-explainer">Current conditions and the five-day forecast for your selected city.</p></div><form className="weather-location-controls" onSubmit={loadWeather}>
           <label><span>Country</span><select value={country} disabled={countriesBusy || countries.length === 0} onChange={(e) => { const value = e.target.value; const selected = countries.find((item) => item.name === value); setCountry(value); setCountryCode(selected?.code || ''); setRegion(''); setCity(''); setRegions([]); setCities([]); }}><option value="">Select a country</option>{countries.map((item) => <option key={item.code} value={item.name}>{item.name}</option>)}</select></label>
           <label><span>State / region</span><select value={region} disabled={!country || regionsBusy || regions.length === 0} onChange={(e) => { setRegion(e.target.value); setCity(''); }}><option value="">{regionsBusy ? 'Loading regions…' : regions.length ? 'Select a state / region' : 'No regions listed'}</option>{regions.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
           <label><span>City</span><select value={city} disabled={!country || citiesBusy || cities.length === 0} onChange={(e) => setCity(e.target.value)}><option value="">{citiesBusy ? 'Loading cities…' : 'Select a city'}</option>{cities.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
           <button type="submit" disabled={weatherBusy || !city}>{weatherBusy ? 'Loading…' : 'Get weather'}</button>
         </form></div>{locationListError && <div className="error" role="alert">{locationListError}</div>}{weatherError && <div className="error" role="alert">{weatherError}</div>}
-          <div className="weather-grid"><article className="current card"><div className="place"><MapPin size={14} />{weather ? [weather.location.name, weather.location.admin1, weather.location.country].filter(Boolean).join(', ') : city}</div><div className="current-main"><div><strong>{cur?.temperature_2m != null ? Math.round(cur.temperature_2m) : '—'}<sup>°C</sup></strong><span>{condition(cur?.weather_code)}</span></div><CloudSun size={47} /></div><div className="metrics"><div><Droplets size={15} />Humidity<strong>{cur?.relative_humidity_2m ?? '—'}%</strong></div><div><CloudRain size={15} />Rain<strong>{cur?.precipitation ?? '—'} mm</strong></div><div><Wind size={15} />Wind<strong>{cur?.wind_speed_10m ?? '—'} km/h</strong></div></div></article>
-            <article className="card forecast"><div className="forecast-head"><div><span className="eyebrow">NEXT FIVE DAYS</span><h3>Weather comparison diagram</h3></div><span className="badge">{weather ? 'Updated' : 'Loading'}</span></div><ForecastDiagram daily={daily} /></article></div>
+          <div className="weather-grid"><article className="current card"><div className="place"><MapPin size={14} />{weather ? [weather.location.name, weather.location.admin1, weather.location.country].filter(Boolean).join(', ') : city}</div><div className="current-main"><div><strong>{cur?.temperature_2m != null ? Math.round(cur.temperature_2m) : '—'}<sup>°C</sup></strong><span>{condition(cur?.weather_code)} · H {todayHigh != null ? `${Math.round(todayHigh)}°` : '—'} / L {todayLow != null ? `${Math.round(todayLow)}°` : '—'}</span></div><CurrentWeatherIcon size={56} style={{ color: Number(cur?.weather_code) >= 51 ? '#68a8db' : '#f3ad38' }} /></div><div className="metrics"><div><Droplets size={15} />Humidity<strong>{cur?.relative_humidity_2m ?? '—'}%</strong></div><div><CloudRain size={15} />Rain chance<strong>{rainToday ?? '—'}%</strong></div><div><Wind size={15} />Wind<strong>{cur?.wind_speed_10m ?? '—'} km/h</strong></div></div></article>
+            <article className="card forecast"><div className="forecast-head"><div><span className="eyebrow">5-DAY FORECAST</span><h3>Upcoming weather</h3></div><span className="badge">{weather ? 'Updated' : 'Loading'}</span></div><ForecastDiagram daily={daily} /></article></div>
           <article className={`card weather-watch ${weatherValueTone(outlook.humidity, 70, 85)}`}><div className="watch-copy"><span className="eyebrow">WEATHER CUES · {weather?.location?.name || city || 'SELECTED CITY'}</span><h3>{outlook.title}</h3><p>{outlook.summary}</p><small>{result ? `Context for ${result.crop} · ${prettify(result.disease)}` : 'General field context · run a plant check for diagnosis-specific guidance'}</small></div><div className="weather-gauges"><CircleGauge label="Peak rain chance" value={rainPeak} tone={weatherValueTone(rainPeak, 35, 60)} detail="Next five days" /><CircleGauge label="Current humidity" value={cur?.relative_humidity_2m ?? null} tone={weatherValueTone(cur?.relative_humidity_2m, 70, 85)} detail="Selected city" /></div></article>
-          <article className="card worldwide-fit-panel" aria-live="polite"><div className="worldwide-fit-head"><div><span className="eyebrow">AI · WEATHER API · WORLDWIDE</span><h3>{result ? `Five-day weather match for ${result.crop}` : 'Worldwide crop weather match'}</h3><p>{result ? `AI compares the detected crop with forecast weather at a reference point in every available country.` : 'Analyze a plant to compare its crop with weather forecasts across countries.'}</p></div><button className="worldwide-retry" type="button" disabled={!result || countryWeatherFitBusy} onClick={() => setCountryWeatherFitReload((count) => count + 1)}>{countryWeatherFitBusy ? 'Comparing…' : countryWeatherFitError ? 'Retry comparison' : 'Refresh worldwide match'}</button></div>
+          <article id="worldwide-match" className="card worldwide-fit-panel" aria-live="polite"><div className="worldwide-fit-head"><div><span className="eyebrow">AI · WEATHER API · WORLDWIDE</span><h3>{result ? `Five-day weather match for ${result.crop}` : 'Worldwide crop weather match'}</h3><p>{result ? `AI compares the detected crop with forecast weather at a reference point in every available country.` : 'Analyze a plant to compare its crop with weather forecasts across countries.'}</p></div><button className="worldwide-retry" type="button" disabled={!result || countryWeatherFitBusy} onClick={() => setCountryWeatherFitReload((count) => count + 1)}>{countryWeatherFitBusy ? 'Comparing…' : countryWeatherFitError ? 'Retry comparison' : 'Refresh worldwide match'}</button></div>
             {!result && <div className="worldwide-fit-message">Upload and analyze a plant photo to get crop-specific country weather matches.</div>}
             {result && countryWeatherFitBusy && <div className="worldwide-fit-message" role="status">Getting five-day forecasts for country reference points and asking AI to compare them with {result.crop}. This may take a little while.</div>}
             {result && countryWeatherFitError && <div className="worldwide-fit-error" role="alert">{countryWeatherFitError}<small>{countryWeatherFitError.includes('OPENAI_API_KEY') ? 'Set OPENAI_API_KEY in backend/.env and restart FastAPI, then retry.' : 'Check that FastAPI can reach Open-Meteo, CountriesNow, and OpenAI, then retry.'}</small></div>}
@@ -441,4 +561,44 @@ export default function App() {
       </div>
     </main>
   </div>;
+}
+
+export default function App() {
+  const [page, setPage] = useState(() => {
+    if (window.location.hash === '#about') return 'about';
+    return window.location.hash && window.location.hash !== '#home' ? 'dashboard' : 'home';
+  });
+  const [mobileAccessOpen, setMobileAccessOpen] = useState(false);
+
+  useEffect(() => {
+    const syncPage = () => {
+      if (window.location.hash === '#about') setPage('about');
+      else if (window.location.hash && window.location.hash !== '#home') setPage('dashboard');
+      else setPage('home');
+    };
+    window.addEventListener('hashchange', syncPage);
+    return () => window.removeEventListener('hashchange', syncPage);
+  }, []);
+
+  function goToDashboard(section = 'overview') {
+    setPage('dashboard');
+    window.history.replaceState(null, '', `#${section}`);
+    requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById(section)?.scrollIntoView({ behavior: 'smooth' })));
+  }
+
+  function openMobileAccess() {
+    if (window.matchMedia('(max-width: 760px)').matches) {
+      window.location.hash = '#plant';
+      return;
+    }
+    setMobileAccessOpen(true);
+  }
+
+  const currentPage = page === 'about'
+    ? <AboutPage onNavigate={goToDashboard} onMobileAccess={openMobileAccess} />
+    : page === 'dashboard'
+      ? <Dashboard onMobileAccess={openMobileAccess} />
+      : <HomePage onDashboard={goToDashboard} onMobileAccess={openMobileAccess} />;
+
+  return <>{currentPage}<MobileAccessModal open={mobileAccessOpen} onClose={() => setMobileAccessOpen(false)} /></>;
 }

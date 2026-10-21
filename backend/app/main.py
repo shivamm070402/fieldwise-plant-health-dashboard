@@ -6,6 +6,8 @@ import logging
 import os
 import asyncio
 import time
+import csv
+import zipfile
 from contextlib import asynccontextmanager
 from datetime import timezone
 from pathlib import Path
@@ -21,7 +23,8 @@ os.environ.setdefault("TF_NUM_INTEROP_THREADS", "2")
 
 import tensorflow as tf
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, Query, Response, UploadFile
+from fastapi import FastAPI, File, Header, HTTPException, Query, Response, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from openai import AsyncOpenAI, OpenAIError
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -31,6 +34,7 @@ from sqlalchemy import desc
 load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
 
 from .database import PredictionRecord, SessionLocal, create_tables
+from .firebase_store import firebase_status, initialize_firebase, save_mobile_scan
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("fieldwise")
@@ -39,6 +43,9 @@ MODEL_PATH = Path(os.getenv("MODEL_PATH", MODEL_DIR / "plant_disease_model.keras
 LABELS_PATH = Path(os.getenv("LABELS_PATH", MODEL_DIR / "class_names.json"))
 SIZE = 224
 MAX_BYTES = int(os.getenv("MAX_UPLOAD_MB", "10")) * 1024 * 1024
+MIN_PLANT_CONFIDENCE = float(os.getenv("MIN_PLANT_CONFIDENCE", "0.55"))
+MIN_CAMERA_PLANT_CONFIDENCE = float(os.getenv("MIN_CAMERA_PLANT_CONFIDENCE", "0.7"))
+MIN_CAMERA_GREEN_RATIO = float(os.getenv("MIN_CAMERA_GREEN_RATIO", "0.08"))
 COUNTRIESNOW_BASE = "https://countriesnow.space/api/v0.1"
 LOCATION_CACHE_TTL_SECONDS = 21600
 WORLD_COUNTRY_CACHE_KEY = "world-country-weather"
@@ -122,7 +129,12 @@ class Predictor:
             self.error = str(exc)
             logger.exception("Model could not be loaded")
 
-    def predict(self, raw: bytes) -> dict[str, Any]:
+    def predict(
+        self,
+        raw: bytes,
+        minimum_confidence: float = MIN_PLANT_CONFIDENCE,
+        require_leaf_visual_cue: bool = False,
+    ) -> dict[str, Any]:
         if self.model is None:
             raise HTTPException(503, self.error or "Model unavailable")
         try:
@@ -134,12 +146,26 @@ class Predictor:
                 batch = np.expand_dims(np.asarray(image, dtype=np.float32), 0)
         except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
             raise HTTPException(400, "Could not read image; upload a JPG, PNG, or WebP photo") from exc
+        if require_leaf_visual_cue:
+            pixels = np.asarray(image, dtype=np.int16)
+            red, green, blue = pixels[:, :, 0], pixels[:, :, 1], pixels[:, :, 2]
+            green_ratio = float(((green > red * 1.05) & (green > blue * 1.03) & (green > 45)).mean())
+            if green_ratio < MIN_CAMERA_GREEN_RATIO:
+                raise HTTPException(
+                    422,
+                    "The camera photo does not appear to show a leaf. Point the camera at one plant leaf, fill most of the frame, and try again.",
+                )
         scores = np.asarray(self.model(batch, training=False))[0].astype(np.float64)
         if len(scores) != len(self.labels) or not np.isfinite(scores).all():
             raise HTTPException(500, "Model returned invalid scores")
         scores = np.clip(scores, 0, None)
         scores /= max(float(scores.sum()), 1e-12)
         indices = np.argsort(scores)[::-1][:3]
+        if float(scores[indices[0]]) < minimum_confidence:
+            raise HTTPException(
+                422,
+                "This image could not be confidently matched to a supported leaf-disease class. Use a clear, close-up photo of one leaf and try again.",
+            )
         label = self.labels[int(indices[0])]
         crop, disease = (label.split("___", 1) + [""])[:2] if "___" in label else ("Plant", label)
         disease = disease.replace("_", " ")
@@ -175,6 +201,7 @@ predictor = Predictor()
 async def lifespan(_: FastAPI):
     create_tables()
     predictor.load()
+    initialize_firebase()
     yield
 
 
@@ -184,7 +211,8 @@ app.add_middleware(CORSMiddleware, allow_origins=[origin.strip().rstrip("/") for
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"status": "ready" if predictor.model is not None else "model_unavailable", "model_ready": predictor.model is not None, "classes": len(predictor.labels), "error": predictor.error}
+    firebase_ready, _ = firebase_status()
+    return {"status": "ready" if predictor.model is not None else "model_unavailable", "model_ready": predictor.model is not None, "firebase_ready": firebase_ready, "classes": len(predictor.labels), "error": predictor.error}
 
 
 @app.post("/api/care-plan")
@@ -271,7 +299,11 @@ async def country_weather_suitability(payload: dict[str, Any]) -> dict[str, Any]
 
 
 @app.post("/api/predict")
-async def predict(file: UploadFile = File(...)) -> dict[str, Any]:
+async def predict(
+    file: UploadFile = File(...),
+    client_platform: str | None = Header(default=None, alias="X-Client-Platform"),
+    image_source: str | None = Header(default=None, alias="X-Image-Source"),
+) -> dict[str, Any]:
     if file.content_type not in {"image/jpeg", "image/png", "image/webp"}:
         raise HTTPException(415, "Upload a JPG, PNG, or WebP image")
     raw = await file.read(MAX_BYTES + 1)
@@ -279,8 +311,11 @@ async def predict(file: UploadFile = File(...)) -> dict[str, Any]:
         raise HTTPException(400, "Uploaded file is empty")
     if len(raw) > MAX_BYTES:
         raise HTTPException(413, f"Image must be smaller than {MAX_BYTES // (1024 * 1024)} MB")
-    result = predictor.predict(raw)
+    minimum_confidence = MIN_CAMERA_PLANT_CONFIDENCE if (image_source or "").strip().lower() == "camera" else MIN_PLANT_CONFIDENCE
+    is_camera_image = (image_source or "").strip().lower() == "camera"
+    result = predictor.predict(raw, minimum_confidence=minimum_confidence, require_leaf_visual_cue=is_camera_image)
     result["filename"] = Path(file.filename or "leaf-image").name
+    result["classes"] = predictor.labels
     with SessionLocal() as session:
         record = PredictionRecord(
             filename=result["filename"],
@@ -296,7 +331,53 @@ async def predict(file: UploadFile = File(...)) -> dict[str, Any]:
         session.commit()
         session.refresh(record)
         result["history_id"] = record.id
+    platform = (client_platform or "").strip().lower()
+    if platform in {"android", "ios"}:
+        firebase_id = await run_in_threadpool(save_mobile_scan, record.id, result, platform)
+        result["firebase_saved"] = firebase_id is not None
+        result["firebase_record_id"] = firebase_id
     return result
+
+
+@app.post("/api/predictions/{prediction_id}/label")
+async def verify_prediction_label(prediction_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    class_name = payload.get("class_name")
+    if not isinstance(class_name, str) or class_name not in predictor.labels:
+        raise HTTPException(422, "Choose a valid plant class from the model labels")
+    with SessionLocal() as session:
+        row = session.get(PredictionRecord, prediction_id)
+        if row is None:
+            raise HTTPException(404, "Saved scan not found")
+        row.expected_class = class_name
+        row.is_correct = class_name == row.predicted_class
+        session.commit()
+        return {"id": row.id, "expected_class": row.expected_class, "is_correct": row.is_correct}
+
+
+@app.get("/api/training-data/export.zip")
+def export_verified_training_data() -> Response:
+    archive_buffer = io.BytesIO()
+    with SessionLocal() as session:
+        rows = session.query(PredictionRecord).filter(
+            PredictionRecord.expected_class.is_not(None),
+            PredictionRecord.image_data.is_not(None),
+        ).order_by(PredictionRecord.id).all()
+        with zipfile.ZipFile(archive_buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            manifest_buffer = io.StringIO()
+            writer = csv.writer(manifest_buffer)
+            writer.writerow(["prediction_id", "image_path", "verified_class", "model_class", "model_confidence", "is_correct", "created_at"])
+            for row in rows:
+                ext = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}.get(row.image_content_type, ".img")
+                image_path = f"{row.expected_class}/{row.id}{ext}"
+                archive.writestr(image_path, row.image_data)
+                writer.writerow([row.id, image_path, row.expected_class, row.predicted_class, row.confidence, row.is_correct, row.created_at.isoformat() if row.created_at else ""])
+            archive.writestr("manifest.csv", manifest_buffer.getvalue())
+    archive_buffer.seek(0)
+    return Response(
+        content=archive_buffer.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="fieldwise-verified-training-data.zip"'},
+    )
 
 
 @app.get("/api/history")
@@ -312,6 +393,8 @@ def prediction_history(limit: int = Query(default=20, ge=1, le=100)) -> list[dic
                 "predicted_class": row.predicted_class,
                 "confidence": row.confidence,
                 "is_healthy": row.is_healthy,
+                "expected_class": row.expected_class,
+                "is_correct": row.is_correct,
                 "image_url": f"/api/history/{row.id}/image" if row.image_data else None,
                 "created_at": (row.created_at if row.created_at.tzinfo else row.created_at.replace(tzinfo=timezone.utc)).isoformat(),
             }
@@ -515,8 +598,8 @@ async def world_country_weather() -> list[dict[str, Any]]:
             name = str(item.get("name") or item.get("country") or "").strip()
             code = codes.get(country_key(name))
             try:
-                latitude = float(item.get("lat", item.get("latitude")))
-                longitude = float(item.get("long", item.get("longitude", item.get("lon"))))
+                latitude = float(item.get("lat", item.get("latitude"))) # type: ignore
+                longitude = float(item.get("long", item.get("longitude", item.get("lon")))) # type: ignore # type: ignore
             except (TypeError, ValueError):
                 continue
             if name and code and np.isfinite([latitude, longitude]).all() and -90 <= latitude <= 90 and -180 <= longitude <= 180:
@@ -713,12 +796,40 @@ async def weather(
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers={"User-Agent": "FieldwisePlantDashboard/1.0"}) as client:
         try:
             if latitude is None or longitude is None:
-                response = await request_weather(client, "https://geocoding-api.open-meteo.com/v1/search", {
-                    "name": f"{city}, {admin1}" if admin1 else city,
-                    "count": 10, "language": "en", "format": "json",
-                    **({"countryCode": country_code} if country_code else {}),
-                })
-                results = response.json().get("results", [])
+                normalized_city = city.casefold()
+                aliases = {"bengaluru": "Bangalore", "bangalore": "Bengaluru"}
+                city_queries = [city]
+                if normalized_city in aliases:
+                    city_queries.append(aliases[normalized_city])
+                location_queries = list(dict.fromkeys(
+                    query
+                    for city_query in city_queries
+                    for query in (
+                        city_query,
+                        ", ".join(part for part in (city_query, country) if part),
+                        ", ".join(part for part in (city_query, admin1, country) if part),
+                    )
+                ))
+                results = []
+                for index, location_query in enumerate(location_queries):
+                    params = {"name": location_query, "count": 10, "language": "en", "format": "json"}
+                    if country_code and index == 0:
+                        params["countryCode"] = country_code
+                    response = await request_weather(client, "https://geocoding-api.open-meteo.com/v1/search", params)
+                    found = response.json().get("results", [])
+                    if not isinstance(found, list) or not found:
+                        continue
+                    matching_country = [item for item in found if not country_code or str(item.get("country_code", "")).casefold() == country_code.casefold()]
+                    if not matching_country and country:
+                        matching_country = [item for item in found if str(item.get("country", "")).casefold() == country.casefold()]
+                    if matching_country:
+                        requested_region = (admin1 or "").casefold()
+                        matching_region = [item for item in matching_country if requested_region and requested_region in " ".join(str(item.get(key, "")) for key in ("admin1", "admin2")).casefold()]
+                        results = matching_region or matching_country
+                        break
+                    if not country_code and not country:
+                        results = found
+                        break
                 if not results:
                     raise HTTPException(404, "Location not found worldwide; try adding its region or country")
                 place = results[0]

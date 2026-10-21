@@ -1,0 +1,40 @@
+{
+  "expo": {
+    "name": "Fieldwise Plant Health",
+    "slug": "fieldwise-plant-health",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.fieldwise.planthealth",
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "Connect to your Fieldwise plant-health service on your local network.",
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
+      }
+    },
+    "android": {
+      "package": "com.fieldwise.planthealth",
+      "edgeToEdgeEnabled": true
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Allow Fieldwise to take a plant photo for health screening.",
+          "photosPermission": "Allow Fieldwise to choose a plant photo for health screening.",
+          "microphonePermission": false
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "a3d83bde-24c2-4d58-8ef9-9daa8707a602"
+      }
+    },
+    "owner": "shivam2002"
+  }
+}

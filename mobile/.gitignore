@@ -1,0 +1,8 @@
+.env
+.env.*
+!.env.example
+.expo/
+node_modules/
+android/
+ios/
+*.apk

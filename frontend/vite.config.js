@@ -6,5 +6,5 @@ export default defineConfig({
   // Leave the default at / for Netlify and local development.
   base: process.env.VITE_BASE_PATH || '/',
   plugins: [react()],
-  server: { proxy: { '/api': 'http://localhost:8000' } },
+  server: { proxy: { '/api': process.env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8001' } },
 });

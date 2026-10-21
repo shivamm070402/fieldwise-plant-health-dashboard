@@ -38,11 +38,16 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      - name: Verify backend URL is configured
+        env:
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+        run: test -n "$VITE_API_BASE_URL" || { echo "Set the VITE_API_BASE_URL repository variable to the deployed backend URL."; exit 1; }
+
       - name: Build frontend
         working-directory: frontend
         env:
           VITE_BASE_PATH: /fieldwise-plant-health-dashboard/
-          VITE_API_BASE_URL: https://fieldwise-plant-health-dashboard-production.up.railway.app
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
         run: npm run build
 
       - name: Configure GitHub Pages

@@ -1,0 +1,22 @@
+.mobile-access-backdrop { position: fixed; z-index: 50; inset: 0; display: grid; place-items: center; padding: 22px; background: #070b08bd; backdrop-filter: blur(8px); }
+.mobile-access-dialog { position: relative; width: min(100%, 430px); padding: 31px; border: 1px solid #dce8d433; border-radius: 22px; color: #eaf0dc; background: #182119; box-shadow: 0 28px 100px #0009; text-align: center; }
+.mobile-access-close { position: absolute; top: 14px; right: 14px; width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid #ffffff20; border-radius: 50%; color: #cbd5c5; background: #ffffff08; cursor: pointer; }
+.mobile-access-icon { width: 46px; height: 46px; display: grid; place-items: center; margin: 0 auto 16px; border: 1px solid #bded7042; border-radius: 50%; color: #bded70; background: #bded7013; }
+.mobile-access-eyebrow { color: #b8cf9c; font-size: 9px; font-weight: 750; letter-spacing: 1.5px; }
+.mobile-access-dialog h2 { margin: 9px 0 9px; color: #edf2e7; font: 600 27px/1.15 Manrope, sans-serif; letter-spacing: -1px; }
+.mobile-access-dialog > p { margin: 0 auto 18px; color: #a7b2a0; font-size: 12px; line-height: 1.65; }
+.mobile-access-download { display: inline-flex; justify-content: center; margin: 0 auto 18px; padding: 12px 18px; border-radius: 999px; color: #172111; background: #bded70; font-size: 12px; font-weight: 750; text-decoration: none; }
+.mobile-access-download:hover { background: #d1f693; }
+.mobile-access-qr { width: 190px; height: 190px; display: block; margin: 0 auto 20px; padding: 9px; border-radius: 14px; background: white; image-rendering: pixelated; }
+.mobile-access-empty { width: 190px; height: 190px; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 10px; margin: 0 auto 20px; padding: 20px; border: 1px dashed #bded7050; border-radius: 14px; color: #bded70; background: #bded7009; }
+.mobile-access-empty span { color: #a7b2a0; font-size: 11px; line-height: 1.5; }
+.mobile-access-url-label { display: block; margin-bottom: 7px; color: #a7b69a; font-size: 8px; font-weight: 750; letter-spacing: 1.15px; text-align: left; }
+.mobile-access-url-row { display: flex; gap: 8px; }
+.mobile-access-url-row input { width: 100%; min-width: 0; height: 42px; padding: 0 12px; border: 1px solid #ffffff24; border-radius: 10px; outline: none; color: #eaf0dc; background: #111911; font-size: 11px; }
+.mobile-access-url-row input:focus { border-color: #bded7080; }
+.mobile-access-url-row button { width: 42px; height: 42px; flex: 0 0 42px; display: grid; place-items: center; border: 1px solid #bded7040; border-radius: 10px; color: #bded70; background: #bded7011; cursor: pointer; }
+.mobile-access-url-row button:disabled { opacity: .4; cursor: not-allowed; }
+.mobile-access-help { display: block; margin-top: 8px; color: #899583; font-size: 10px; line-height: 1.5; text-align: left; }
+.mobile-access-help code { color: #d5e5c5; }
+.mobile-access-footer { margin-top: 17px; padding-top: 13px; border-top: 1px solid #ffffff1c; color: #81907d; font-size: 9px; line-height: 1.5; }
+@media(max-width: 480px) { .mobile-access-dialog { padding: 27px 21px; } }
