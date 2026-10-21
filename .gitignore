@@ -5,6 +5,7 @@ __pycache__/
 venv/
 node_modules/
 .vscode/
+firebase-debug.log
 frontend/dist/
 .env
 backend/models/*.keras

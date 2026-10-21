@@ -24,7 +24,6 @@ os.environ.setdefault("TF_NUM_INTEROP_THREADS", "2")
 import tensorflow as tf
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Header, HTTPException, Query, Response, UploadFile
-from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from openai import AsyncOpenAI, OpenAIError
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -34,7 +33,6 @@ from sqlalchemy import desc
 load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
 
 from .database import PredictionRecord, SessionLocal, create_tables
-from .firebase_store import firebase_status, initialize_firebase, save_mobile_scan
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("fieldwise")
@@ -46,6 +44,7 @@ MAX_BYTES = int(os.getenv("MAX_UPLOAD_MB", "10")) * 1024 * 1024
 MIN_PLANT_CONFIDENCE = float(os.getenv("MIN_PLANT_CONFIDENCE", "0.55"))
 MIN_CAMERA_PLANT_CONFIDENCE = float(os.getenv("MIN_CAMERA_PLANT_CONFIDENCE", "0.7"))
 MIN_CAMERA_GREEN_RATIO = float(os.getenv("MIN_CAMERA_GREEN_RATIO", "0.08"))
+MIN_CAMERA_CENTER_GREEN_RATIO = float(os.getenv("MIN_CAMERA_CENTER_GREEN_RATIO", "0.25"))
 COUNTRIESNOW_BASE = "https://countriesnow.space/api/v0.1"
 LOCATION_CACHE_TTL_SECONDS = 21600
 WORLD_COUNTRY_CACHE_KEY = "world-country-weather"
@@ -149,11 +148,14 @@ class Predictor:
         if require_leaf_visual_cue:
             pixels = np.asarray(image, dtype=np.int16)
             red, green, blue = pixels[:, :, 0], pixels[:, :, 1], pixels[:, :, 2]
-            green_ratio = float(((green > red * 1.05) & (green > blue * 1.03) & (green > 45)).mean())
-            if green_ratio < MIN_CAMERA_GREEN_RATIO:
+            green_mask = (green > red * 1.05) & (green > blue * 1.03) & (green > 45)
+            green_ratio = float(green_mask.mean())
+            center_margin = SIZE // 6
+            center_green_ratio = float(green_mask[center_margin:-center_margin, center_margin:-center_margin].mean())
+            if green_ratio < MIN_CAMERA_GREEN_RATIO or center_green_ratio < MIN_CAMERA_CENTER_GREEN_RATIO:
                 raise HTTPException(
                     422,
-                    "The camera photo does not appear to show a leaf. Point the camera at one plant leaf, fill most of the frame, and try again.",
+                    "This is not a clear leaf photo. Center one plant leaf in the frame, move closer, and try again.",
                 )
         scores = np.asarray(self.model(batch, training=False))[0].astype(np.float64)
         if len(scores) != len(self.labels) or not np.isfinite(scores).all():
@@ -162,6 +164,11 @@ class Predictor:
         scores /= max(float(scores.sum()), 1e-12)
         indices = np.argsort(scores)[::-1][:3]
         if float(scores[indices[0]]) < minimum_confidence:
+            if require_leaf_visual_cue:
+                raise HTTPException(
+                    422,
+                    "This is not a clear leaf photo or the leaf disease is not supported. Center one leaf in the frame and try again.",
+                )
             raise HTTPException(
                 422,
                 "This image could not be confidently matched to a supported leaf-disease class. Use a clear, close-up photo of one leaf and try again.",
@@ -201,7 +208,6 @@ predictor = Predictor()
 async def lifespan(_: FastAPI):
     create_tables()
     predictor.load()
-    initialize_firebase()
     yield
 
 
@@ -211,8 +217,7 @@ app.add_middleware(CORSMiddleware, allow_origins=[origin.strip().rstrip("/") for
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    firebase_ready, _ = firebase_status()
-    return {"status": "ready" if predictor.model is not None else "model_unavailable", "model_ready": predictor.model is not None, "firebase_ready": firebase_ready, "classes": len(predictor.labels), "error": predictor.error}
+    return {"status": "ready" if predictor.model is not None else "model_unavailable", "model_ready": predictor.model is not None, "classes": len(predictor.labels), "error": predictor.error}
 
 
 @app.post("/api/care-plan")
@@ -301,7 +306,6 @@ async def country_weather_suitability(payload: dict[str, Any]) -> dict[str, Any]
 @app.post("/api/predict")
 async def predict(
     file: UploadFile = File(...),
-    client_platform: str | None = Header(default=None, alias="X-Client-Platform"),
     image_source: str | None = Header(default=None, alias="X-Image-Source"),
 ) -> dict[str, Any]:
     if file.content_type not in {"image/jpeg", "image/png", "image/webp"}:
@@ -331,11 +335,6 @@ async def predict(
         session.commit()
         session.refresh(record)
         result["history_id"] = record.id
-    platform = (client_platform or "").strip().lower()
-    if platform in {"android", "ios"}:
-        firebase_id = await run_in_threadpool(save_mobile_scan, record.id, result, platform)
-        result["firebase_saved"] = firebase_id is not None
-        result["firebase_record_id"] = firebase_id
     return result
 
 

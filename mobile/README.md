@@ -13,18 +13,9 @@ Copy `.env.example` to `.env` and set `EXPO_PUBLIC_API_BASE_URL` to the backend'
 
 Restart Expo after changing `.env` because `EXPO_PUBLIC_*` values are bundled into the app.
 
-## 2. Save mobile field tests to Firebase
+## 2. Mobile scan history
 
-The app sends an Android/iOS platform header with each scan. FastAPI saves the image and result in its configured SQL history as before, then writes the prediction metadata to Firestore collection `mobile_scan_tests` when Firebase Admin is configured. The Firestore document contains the prediction, confidence, top matches, device platform, and server timestamp; the photo itself remains in the backend database.
-
-Create a Firebase service account for the project and configure the backend environment (never put the service-account key in the mobile app):
-
-```text
-FIREBASE_PROJECT_ID=your-firebase-project-id
-GOOGLE_APPLICATION_CREDENTIALS=D:\secure\firebase-service-account.json
-```
-
-Install the updated backend dependencies and restart FastAPI. For Railway, set both variables in the backend service settings and provide the service-account JSON through the platform's secret variables or a protected mounted file. The mobile result says whether the scan reached Firestore; if not, it is still in the backend's SQL history.
+FastAPI stores mobile scans, including the uploaded photo and prediction, in the configured SQL database. SQLite is suitable for local development; use PostgreSQL with a persistent database in production. No Firebase account or credentials are required.
 
 Mobile camera scans are collected as real-world *unlabeled* evaluation examples. They do not automatically retrain the model: have an agricultural expert verify/correct each label and split reviewed examples into train/validation/test data before retraining. Never evaluate on photos already used for training.
 

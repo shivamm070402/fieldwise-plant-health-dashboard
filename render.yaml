@@ -1,12 +1,11 @@
 services:
   - type: web
     name: fieldwise-plant-api
-    runtime: python
+    runtime: docker
     plan: free
     region: singapore
-    rootDir: backend
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
     healthCheckPath: /api/health
     autoDeployTrigger: commit
     envVars:
@@ -16,9 +15,16 @@ services:
         value: "2"
       - key: TF_NUM_INTEROP_THREADS
         value: "2"
-      - key: FIREBASE_PROJECT_ID
-        sync: false
-      - key: FIREBASE_SERVICE_ACCOUNT_JSON
-        sync: false
       - key: OPENAI_API_KEY
         sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: fieldwise-plant-db
+          property: connectionString
+
+databases:
+  - name: fieldwise-plant-db
+    databaseName: fieldwise
+    user: fieldwise
+    plan: free
+    region: singapore

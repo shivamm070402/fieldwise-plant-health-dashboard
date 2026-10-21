@@ -2,7 +2,7 @@
 
 React (JavaScript) + Vite frontend with GSAP motion, a FastAPI inference API, and SQLAlchemy prediction history. The API supports PostgreSQL and uses SQLite for local development when `DATABASE_URL` is unset. MongoDB is not needed for the current data model.
 
-The Expo app keeps the Fieldwise visual style in a phone-sized layout. Mobile scan results and uploaded image bytes are stored in the configured SQL history; when Firebase Admin credentials are configured on FastAPI, mobile prediction metadata is also mirrored to Firestore `mobile_scan_tests`. See `mobile/README.md` for Firebase setup and field-test data notes.
+The Expo app keeps the Fieldwise visual style in a phone-sized layout. Mobile scan results and uploaded image bytes are stored in the configured SQL history; Firebase is not used. See `mobile/README.md` for mobile setup and field-test data notes.
 
 ## Live deployment
 
@@ -102,9 +102,19 @@ npm run dev
 
 Open the Vite URL printed in the terminal (normally `http://localhost:5173`). Vite forwards `/api` requests to `http://127.0.0.1:8001` by default. Set `VITE_API_PROXY_TARGET` if your backend uses another local port.
 
+### Run the complete stack with Docker
+
+Install and start Docker Desktop, then from the repository root run:
+
+```powershell
+docker compose up --build
+```
+
+Open `http://localhost:8080`. The frontend container proxies `/api` to FastAPI, and the named `fieldwise_data` volume persists local SQL history. Set `OPENAI_API_KEY` in the shell before starting Compose only if AI care plans are needed. Stop the stack with `Ctrl+C`, then `docker compose down` (the database volume is kept); use `docker compose down -v` only if you intend to delete its data.
+
 ## 3. Deploy the API to Render
 
-The root `render.yaml` defines a free Python web service from `backend/`, with `/api/health` as its health check. Create it in Render using **New → Blueprint**, connect this GitHub repository, and apply the Blueprint. Enter Firebase service-account values if using Firebase storage and `OPENAI_API_KEY` only if AI care-plan features are needed. Render's free filesystem is ephemeral, so SQLite history is not durable; use Firebase or another persistent external database for data you need to retain. The free service sleeps after 15 minutes idle and can take about a minute to wake. The free instance has 512 MB RAM, which may be insufficient for TensorFlow/model inference; if the service restarts or returns 502s, inspect its logs and use a larger instance or a smaller inference runtime. Check `https://<your-render-domain>/api/health` after deployment.
+The root `render.yaml` defines a free Docker web service from `backend/Dockerfile` and a free PostgreSQL database, with `/api/health` as its health check. Create it in Render using **New → Blueprint**, connect this GitHub repository, and apply the Blueprint. `OPENAI_API_KEY` is optional and only needed for AI care-plan features. Render's free Postgres currently expires after 30 days, so upgrade or export data before expiration if you need to retain scan history. The free web service may sleep while idle and its memory limit may be insufficient for TensorFlow/model inference; inspect Render logs if it restarts or returns 502s. Check `https://<your-render-domain>/api/health` after deployment.
 
 ## 4. Deploy the frontend to Netlify
 
@@ -120,7 +130,7 @@ The `.github/workflows/pages.yml` workflow builds `frontend/` and publishes `fro
 
 1. Make the repository public or use a GitHub plan that supports Pages for private repositories.
 2. In repository **Settings → Pages**, set **Build and deployment → Source** to **GitHub Actions**.
-3. Create a Render Blueprint from this repository. Set its `FIREBASE_PROJECT_ID` and `FIREBASE_SERVICE_ACCOUNT_JSON` secrets if using Firebase storage; the Blueprint includes the GitHub Pages origin in `CORS_ORIGINS`.
+3. Create a Render Blueprint from this repository. The Blueprint includes the GitHub Pages origin in `CORS_ORIGINS`; Firebase credentials are not used.
 4. Add the Render API origin as the `VITE_API_BASE_URL` repository variable under **Settings → Secrets and variables → Actions → Variables**. Use the public domain shown in Render after the backend deploys.
 5. Push changes to `main` or run **Actions → Deploy frontend to GitHub Pages → Run workflow**. The published site is https://shivamm070402.github.io/fieldwise-plant-health-dashboard/.
 

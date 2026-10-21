@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Platform, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 
 const API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL || '').trim().replace(/\/+$/, '');
@@ -36,7 +36,6 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [service, setService] = useState('checking');
-  const [firebaseReady, setFirebaseReady] = useState(false);
 
   const checkService = useCallback(async () => {
     if (!API_BASE || API_BASE.includes('your-deployed-backend')) {
@@ -46,7 +45,6 @@ export default function App() {
     try {
       const response = await fetch(`${API_BASE}/api/health`);
       const data = await readResponse(response);
-      setFirebaseReady(Boolean(data.firebase_ready));
       setService(response.ok && data.status === 'ready' ? 'ready' : 'limited');
     } catch {
       setService('offline');
@@ -72,7 +70,7 @@ export default function App() {
         name: asset.fileName || `fieldwise-${Date.now()}.jpg`,
         type: asset.mimeType || 'image/jpeg',
       });
-      const response = await fetch(`${API_BASE}/api/predict`, { method: 'POST', body: data, headers: { Accept: 'application/json', 'X-Client-Platform': Platform.OS, ...(imageSource === 'camera' ? { 'X-Image-Source': 'camera' } : {}) } });
+      const response = await fetch(`${API_BASE}/api/predict`, { method: 'POST', body: data, headers: { Accept: 'application/json', ...(imageSource === 'camera' ? { 'X-Image-Source': 'camera' } : {}) } });
       const payload = await readResponse(response);
       if (!response.ok) throw new Error(formatApiDetail(payload?.detail) || `Plant scan failed (HTTP ${response.status}).`);
       setResult(payload);
@@ -123,7 +121,6 @@ export default function App() {
         <Text style={styles.title}>Look closer.{ '\n' }<Text style={styles.titleAccent}>Grow forward.</Text></Text>
         <Text style={styles.subtitle}>Capture a clear photo of a plant leaf. Fieldwise screens the image and brings the result back to your phone.</Text>
         <View style={styles.statusRow}><View style={[styles.statusDot, service === 'ready' && styles.statusReady, service === 'offline' && styles.statusOffline]} /><Text style={styles.statusText}>{statusText}</Text></View>
-        <Text style={styles.firebaseStatus}>{firebaseReady ? 'Firebase field-test storage connected' : 'Firebase field-test storage not configured'}</Text>
       </View>
 
       <View style={styles.scanPanel}>
@@ -145,7 +142,7 @@ export default function App() {
           <View style={styles.confidenceRow}><Text style={styles.confidenceLabel}>MODEL CONFIDENCE</Text><Text style={styles.confidenceValue}>{confidence.toFixed(1)}%</Text></View>
           <View style={styles.confidenceTrack}><View style={[styles.confidenceFill, { width: `${confidence}%` }]} /></View>
           <View style={[styles.healthPill, result.is_healthy ? styles.healthGood : styles.healthReview]}><Text style={styles.healthText}>{result.is_healthy ? 'Looks healthy' : 'Review symptoms'}</Text></View>
-          <Text style={styles.storageStatus}>{result.firebase_saved ? 'Saved to Firebase mobile test collection' : 'Saved to backend history · Firebase is not connected'}</Text>
+          <Text style={styles.storageStatus}>Saved to backend scan history</Text>
           {Array.isArray(result.advice) && result.advice.length ? <View style={styles.adviceList}>{result.advice.slice(0, 3).map((tip, index) => <Text style={styles.advice} key={`${index}-${tip}`}>•  {tip}</Text>)}</View> : null}
           <Text style={styles.disclaimer}>{result.disclaimer || 'AI screening only. Confirm uncertain or severe cases with a local agricultural professional.'}</Text>
         </View> : <View style={styles.emptyResult}><Text style={styles.emptyResultText}>{busy ? 'Your photo is being screened…' : 'Capture or choose a plant photo to see its screening result here.'}</Text></View>}
@@ -178,7 +175,6 @@ const styles = StyleSheet.create({
   statusReady: { backgroundColor: '#bded70' },
   statusOffline: { backgroundColor: '#e27d69' },
   statusText: { color: '#aebba7', fontSize: 11 },
-  firebaseStatus: { marginTop: 8, color: '#85927e', fontSize: 10 },
   scanPanel: { padding: 17, borderRadius: 18, borderWidth: 1, borderColor: '#dce8d425', backgroundColor: '#1b251c' },
   panelHeading: { minHeight: 43, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
   sectionLabel: { color: '#96a78a', fontSize: 9, fontWeight: '700', letterSpacing: 1.4 },

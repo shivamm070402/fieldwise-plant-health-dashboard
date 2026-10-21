@@ -38,7 +38,7 @@ if ($createdVenv) {
     & $venvPython -m pip install -r $requirements
     if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed. Check your network and rerun this script.' }
 } else {
-    & $venvPython -c 'import importlib.util, sys; sys.exit(0 if importlib.util.find_spec("openai") and importlib.util.find_spec("dotenv") and importlib.util.find_spec("firebase_admin") else 1)' 2>$null
+    & $venvPython -c 'import importlib.util, sys; sys.exit(0 if importlib.util.find_spec("openai") and importlib.util.find_spec("dotenv") else 1)' 2>$null
     if ($LASTEXITCODE -ne 0) {
         & $venvPython -m pip install -r $requirements
         if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed. Check your network and rerun this script.' }
