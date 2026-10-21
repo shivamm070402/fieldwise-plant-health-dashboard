@@ -12,8 +12,12 @@
   },
   "dependencies": {
     "expo": "~57.0.0",
+    "expo-file-system": "~57.0.7",
     "expo-image-picker": "~57.0.0",
     "react": "19.2.3",
     "react-native": "0.86.3"
+  },
+  "devDependencies": {
+    "@expo/ngrok": "^4.1.3"
   }
 }

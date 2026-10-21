@@ -45,6 +45,7 @@ MIN_PLANT_CONFIDENCE = float(os.getenv("MIN_PLANT_CONFIDENCE", "0.55"))
 MIN_CAMERA_PLANT_CONFIDENCE = float(os.getenv("MIN_CAMERA_PLANT_CONFIDENCE", "0.7"))
 MIN_CAMERA_GREEN_RATIO = float(os.getenv("MIN_CAMERA_GREEN_RATIO", "0.08"))
 MIN_CAMERA_CENTER_GREEN_RATIO = float(os.getenv("MIN_CAMERA_CENTER_GREEN_RATIO", "0.25"))
+MAX_CAMERA_CENTER_SKIN_RATIO = float(os.getenv("MAX_CAMERA_CENTER_SKIN_RATIO", "0.28"))
 COUNTRIESNOW_BASE = "https://countriesnow.space/api/v0.1"
 LOCATION_CACHE_TTL_SECONDS = 21600
 WORLD_COUNTRY_CACHE_KEY = "world-country-weather"
@@ -151,11 +152,33 @@ class Predictor:
             green_mask = (green > red * 1.05) & (green > blue * 1.03) & (green > 45)
             green_ratio = float(green_mask.mean())
             center_margin = SIZE // 6
+            center = pixels[center_margin:-center_margin, center_margin:-center_margin]
             center_green_ratio = float(green_mask[center_margin:-center_margin, center_margin:-center_margin].mean())
-            if green_ratio < MIN_CAMERA_GREEN_RATIO or center_green_ratio < MIN_CAMERA_CENTER_GREEN_RATIO:
+            center_red, center_green, center_blue = np.moveaxis(center.astype(np.float32), -1, 0)
+            luminance = 0.299 * center_red + 0.587 * center_green + 0.114 * center_blue
+            chroma_blue = 128 - 0.168736 * center_red - 0.331264 * center_green + 0.5 * center_blue
+            chroma_red = 128 + 0.5 * center_red - 0.418688 * center_green - 0.081312 * center_blue
+            skin_mask = (
+                (luminance > 60)
+                & (chroma_blue > 80)
+                & (chroma_blue < 135)
+                & (chroma_red > 130)
+                & (chroma_red < 180)
+                & (center_red > center_green * 1.05)
+            )
+            center_skin_ratio = float(skin_mask.mean())
+            if center_skin_ratio > MAX_CAMERA_CENTER_SKIN_RATIO:
                 raise HTTPException(
                     422,
-                    "This is not a clear leaf photo. Center one plant leaf in the frame, move closer, and try again.",
+                    "This looks like a person or skin, not a plant leaf. Point the camera at one clear leaf and try again.",
+                )
+            if (
+                green_ratio < MIN_CAMERA_GREEN_RATIO
+                or center_green_ratio < MIN_CAMERA_CENTER_GREEN_RATIO
+            ):
+                raise HTTPException(
+                    422,
+                    "This is not a clear leaf photo. Keep one plant leaf centered in the frame and try again.",
                 )
         scores = np.asarray(self.model(batch, training=False))[0].astype(np.float64)
         if len(scores) != len(self.labels) or not np.isfinite(scores).all():

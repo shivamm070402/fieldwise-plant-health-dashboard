@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Image, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import { fetch as expoFetch } from 'expo/fetch';
+import { File as ExpoFile } from 'expo-file-system';
 
 const API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL || '').trim().replace(/\/+$/, '');
 
@@ -30,8 +32,13 @@ function formatApiDetail(detail) {
   return '';
 }
 
+function formatClassName(value) {
+  return String(value || '').replaceAll('___', ' · ').replaceAll('_', ' ').replace(/\s+/g, ' ').trim();
+}
+
 export default function App() {
   const [photo, setPhoto] = useState(null);
+  const [photoSource, setPhotoSource] = useState('library');
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -60,17 +67,15 @@ export default function App() {
       return;
     }
     setPhoto(asset);
+    setPhotoSource(imageSource);
     setResult(null);
     setError('');
     setBusy(true);
     try {
+      if (!asset?.uri) throw new Error('The selected photo has no readable file path. Choose or capture it again.');
       const data = new FormData();
-      data.append('file', {
-        uri: asset.uri,
-        name: asset.fileName || `fieldwise-${Date.now()}.jpg`,
-        type: asset.mimeType || 'image/jpeg',
-      });
-      const response = await fetch(`${API_BASE}/api/predict`, { method: 'POST', body: data, headers: { Accept: 'application/json', ...(imageSource === 'camera' ? { 'X-Image-Source': 'camera' } : {}) } });
+      data.append('file', new ExpoFile(asset.uri), asset.fileName || `fieldwise-${Date.now()}.jpg`);
+      const response = await expoFetch(`${API_BASE}/api/predict`, { method: 'POST', body: data, headers: { Accept: 'application/json', ...(imageSource === 'camera' ? { 'X-Image-Source': 'camera' } : {}) } });
       const payload = await readResponse(response);
       if (!response.ok) throw new Error(formatApiDetail(payload?.detail) || `Plant scan failed (HTTP ${response.status}).`);
       setResult(payload);
@@ -117,9 +122,9 @@ export default function App() {
       </View>
 
       <View style={styles.hero}>
-        <Text style={styles.kicker}>FIELD INTELLIGENCE · MOBILE</Text>
+        <Text style={styles.kicker}>FIELD INTELLIGENCE · PLANT SCAN</Text>
         <Text style={styles.title}>Look closer.{ '\n' }<Text style={styles.titleAccent}>Grow forward.</Text></Text>
-        <Text style={styles.subtitle}>Capture a clear photo of a plant leaf. Fieldwise screens the image and brings the result back to your phone.</Text>
+        <Text style={styles.subtitle}>Capture or choose a leaf photo. The same Fieldwise model screens it and returns the crop, likely issue, and confidence.</Text>
         <View style={styles.statusRow}><View style={[styles.statusDot, service === 'ready' && styles.statusReady, service === 'offline' && styles.statusOffline]} /><Text style={styles.statusText}>{statusText}</Text></View>
       </View>
 
@@ -131,6 +136,7 @@ export default function App() {
           <Text style={styles.primaryButtonText}>{busy ? 'Analyzing photo…' : 'Capture & detect'}</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.secondaryButton} onPress={choosePhoto} disabled={busy} accessibilityRole="button"><Text style={styles.secondaryButtonText}>Choose from photos</Text></TouchableOpacity>
+        {photo && !busy ? <TouchableOpacity style={styles.retryButton} onPress={() => detectImage(photo, photoSource)} accessibilityRole="button"><Text style={styles.retryButtonText}>Analyze this photo again</Text></TouchableOpacity> : null}
         {error ? <View style={styles.errorBox}><Text style={styles.errorText}>{error}</Text></View> : null}
       </View>
 
@@ -142,6 +148,13 @@ export default function App() {
           <View style={styles.confidenceRow}><Text style={styles.confidenceLabel}>MODEL CONFIDENCE</Text><Text style={styles.confidenceValue}>{confidence.toFixed(1)}%</Text></View>
           <View style={styles.confidenceTrack}><View style={[styles.confidenceFill, { width: `${confidence}%` }]} /></View>
           <View style={[styles.healthPill, result.is_healthy ? styles.healthGood : styles.healthReview]}><Text style={styles.healthText}>{result.is_healthy ? 'Looks healthy' : 'Review symptoms'}</Text></View>
+          {Array.isArray(result.top_predictions) && result.top_predictions.length ? <View style={styles.matches}>
+            <Text style={styles.matchesTitle}>OTHER POSSIBLE MATCHES</Text>
+            {result.top_predictions.slice(1, 3).map((match) => <View style={styles.matchRow} key={match.class_name}>
+              <View style={styles.matchLabelRow}><Text style={styles.matchName} numberOfLines={1}>{formatClassName(match.class_name)}</Text><Text style={styles.matchValue}>{(Number(match.confidence || 0) * 100).toFixed(1)}%</Text></View>
+              <View style={styles.matchTrack}><View style={[styles.matchFill, { width: `${Math.max(0, Math.min(100, Number(match.confidence || 0) * 100))}%` }]} /></View>
+            </View>)}
+          </View> : null}
           <Text style={styles.storageStatus}>Saved to backend scan history</Text>
           {Array.isArray(result.advice) && result.advice.length ? <View style={styles.adviceList}>{result.advice.slice(0, 3).map((tip, index) => <Text style={styles.advice} key={`${index}-${tip}`}>•  {tip}</Text>)}</View> : null}
           <Text style={styles.disclaimer}>{result.disclaimer || 'AI screening only. Confirm uncertain or severe cases with a local agricultural professional.'}</Text>
@@ -191,6 +204,8 @@ const styles = StyleSheet.create({
   primaryButtonText: { color: '#172012', fontSize: 14, fontWeight: '700' },
   secondaryButton: { minHeight: 43, alignItems: 'center', justifyContent: 'center', marginTop: 8, borderWidth: 1, borderColor: '#bded7040', borderRadius: 24 },
   secondaryButtonText: { color: '#c6dcab', fontSize: 12, fontWeight: '600' },
+  retryButton: { minHeight: 40, alignItems: 'center', justifyContent: 'center', marginTop: 8, borderRadius: 20, backgroundColor: '#ffffff0d' },
+  retryButtonText: { color: '#c6dcab', fontSize: 11, fontWeight: '600' },
   errorBox: { marginTop: 12, padding: 12, borderRadius: 10, borderWidth: 1, borderColor: '#e88c6f4a', backgroundColor: '#852f2026' },
   errorText: { color: '#ffd4c6', fontSize: 12, lineHeight: 18 },
   resultPanel: { marginTop: 14, padding: 17, borderRadius: 18, borderWidth: 1, borderColor: '#dce8d425', backgroundColor: '#1b251c' },
@@ -207,6 +222,14 @@ const styles = StyleSheet.create({
   healthGood: { backgroundColor: '#bded701c' },
   healthReview: { backgroundColor: '#eeaa4d1c' },
   healthText: { color: '#dcebc8', fontSize: 11, fontWeight: '600' },
+  matches: { marginTop: 18, paddingTop: 14, borderTopWidth: 1, borderTopColor: '#ffffff1b' },
+  matchesTitle: { marginBottom: 10, color: '#96a78a', fontSize: 9, fontWeight: '700', letterSpacing: 1.2 },
+  matchRow: { marginBottom: 9 },
+  matchLabelRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  matchName: { flex: 1, color: '#c0cbb9', fontSize: 10 },
+  matchValue: { color: '#bded70', fontSize: 10, fontWeight: '700' },
+  matchTrack: { height: 4, marginTop: 5, overflow: 'hidden', borderRadius: 3, backgroundColor: '#ffffff1a' },
+  matchFill: { height: 4, borderRadius: 3, backgroundColor: '#bded70' },
   storageStatus: { marginTop: 12, color: '#9ba997', fontSize: 10, lineHeight: 16 },
   adviceList: { gap: 8, marginTop: 16 },
   advice: { color: '#c0cbb9', fontSize: 12, lineHeight: 18 },
