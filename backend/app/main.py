@@ -206,7 +206,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Fieldwise Plant Care API", version="1.0.0", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=[origin.strip().rstrip("/") for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173,https://shivamm070402.github.io").split(",") if origin.strip()], allow_methods=["GET", "POST"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=[origin.strip().rstrip("/") for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173,https://shivamm070402.github.io,https://fieldwise-plant-health-dashboard.netlify.app").split(",") if origin.strip()], allow_methods=["GET", "POST"], allow_headers=["*"])
 
 
 @app.get("/api/health")

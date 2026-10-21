@@ -11,7 +11,7 @@ services:
     autoDeployTrigger: commit
     envVars:
       - key: CORS_ORIGINS
-        value: https://shivamm070402.github.io
+        value: https://shivamm070402.github.io,https://fieldwise-plant-health-dashboard.netlify.app
       - key: TF_NUM_INTRAOP_THREADS
         value: "2"
       - key: TF_NUM_INTEROP_THREADS
